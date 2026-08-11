@@ -60,8 +60,8 @@ function checkImageLoadable(srcUrl) {
 }
 
 export async function fetchLocationWeatherBgImage(settings, cityDate = new Date(), forceNext = false) {
-  const city = settings?.city || 'Sfax';
-  const country = settings?.country || 'Tunisia';
+  const city = settings?.city || 'Makkah';
+  const country = settings?.country || '';
   const apiKey = settings?.tavilyApiKey || '';
   const slot = getCurrentTimeSlot(cityDate);
   const commentary = getWeatherCommentary(city, slot.id);

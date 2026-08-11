@@ -946,7 +946,11 @@ export default function PrayerTrackerView({ settings, onRecordUpdated, onRejectB
                 <span>•</span>
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', color: 'var(--status-on-time)' }}>
                   <MapPin size={13} />
-                  <span>{settings.city || 'Sfax'}، {settings.country || 'Tunisia'}</span>
+                  <span>
+                    {(settings.city || settings.country)
+                      ? `${settings.city || ''}${settings.city && settings.country ? '، ' : ''}${settings.country || ''}`
+                      : 'الموقع غير محدد (اضبط الإعدادات)'}
+                  </span>
                 </span>
               </div>
 

@@ -8,8 +8,8 @@ export async function fetchPrayerTimesFromTavily(
   targetDateStr = '',
   geminiApiKey = ''
 ) {
-  let city = manualCity || 'Sfax';
-  let country = manualCountry || 'Tunisia';
+  let city = manualCity || '';
+  let country = manualCountry || '';
   const dateQueryText = targetDateStr ? `tomorrow ${targetDateStr}` : 'today';
 
   // Helper to parse text using Gemini AI first, fallback to regex

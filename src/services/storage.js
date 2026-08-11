@@ -32,10 +32,11 @@ export function getCityNowDate(timezoneStr) {
 
 const DEFAULT_SETTINGS = {
   geminiApiKey: '',
+  tavilyApiKey: '',
   prayerSourceUrl: '',
   gracePeriodMinutes: 15,
-  city: 'Sfax',
-  country: 'Tunisia',
+  city: '',
+  country: '',
   customBgImages: [],
   activeCustomBgImage: '',
   youtubeLiveUrl: 'https://www.youtube-nocookie.com/embed/m9-Umj3aL1I',
@@ -43,12 +44,12 @@ const DEFAULT_SETTINGS = {
 };
 
 const DEFAULT_PRAYER_TIMES = {
-  Fajr: '04:15',
-  Sunrise: '05:45',
-  Dhuhr: '12:30',
-  Asr: '16:00',
-  Maghrib: '19:30',
-  Isha: '21:00',
+  Fajr: '',
+  Sunrise: '',
+  Dhuhr: '',
+  Asr: '',
+  Maghrib: '',
+  Isha: '',
 };
 
 export const PRAYER_NAMES = [
