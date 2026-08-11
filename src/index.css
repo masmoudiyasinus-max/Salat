@@ -228,7 +228,7 @@ body {
   background-color: currentColor;
 }
 
-/* Universal Equal Strong Frosted Glassmorphism Class for ALL Cards & Frames */
+/* Universal Solid/Dark Background Class for ALL Cards & Frames (No Backdrop Blur) */
 .glass-frame,
 .bento-card,
 .navbar-header,
@@ -241,10 +241,18 @@ body {
 .custom-select-menu,
 .form-input,
 .form-select {
-  background: rgba(0, 0, 0, 0.60) !important;
-  backdrop-filter: blur(20px) !important;
-  -webkit-backdrop-filter: blur(20px) !important;
+  background: var(--bg-secondary) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
   border: 1px solid rgba(255, 255, 255, 0.12) !important;
+}
+
+/* EXCEPTION: Active Prayer Hero Card ONLY retains frosted glass blur */
+.active-prayer-hero-card {
+  background: rgba(15, 23, 42, 0.75) !important;
+  backdrop-filter: blur(24px) !important;
+  -webkit-backdrop-filter: blur(24px) !important;
+  border: 1.5px solid rgba(255, 255, 255, 0.2) !important;
 }
 
 .bento-card {
@@ -948,9 +956,9 @@ body {
 .prayer-modal-backdrop {
   position: fixed;
   inset: 0;
-  background-color: rgba(0, 0, 0, 0.7);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  background-color: rgba(0, 0, 0, 0.75);
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
   z-index: 1000;
   display: flex;
   align-items: center;

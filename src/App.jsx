@@ -5,7 +5,8 @@ import PrayerTrackerView from './components/PrayerTrackerView';
 import DashboardView from './components/DashboardView';
 import ChatView from './components/ChatView';
 import SettingsView from './components/SettingsView';
-import { getSettings } from './services/storage';
+import WelcomeModal from './components/WelcomeModal';
+import { getSettings, saveSettings } from './services/storage';
 
 export function extractYouTubeId(url) {
   if (!url) return '';
@@ -29,7 +30,6 @@ export function getDesiredBg(settings) {
     if (imgUrl && typeof imgUrl === 'string' && imgUrl.trim() !== '') {
       return { type: 'image', imageUrl: imgUrl.trim(), key: `img_${imgUrl.trim()}` };
     }
-    // Return null if custom_image mode has no valid image found/inserted yet!
     return null;
   }
   if (settings?.youtubeLiveUrl) {
@@ -48,6 +48,9 @@ export default function App() {
   const [isWallpaperFocusMode, setIsWallpaperFocusMode] = useState(false);
   const [isAudioMuted, setIsAudioMuted] = useState(true);
   const [syncToastMsg, setSyncToastMsg] = useState('');
+  const [showWelcomeModal, setShowWelcomeModal] = useState(() => {
+    return localStorage.getItem('prayer_tracker_welcome_seen') !== 'true';
+  });
 
   const iframeRef = useRef(null);
   const prevIframeRef = useRef(null);
@@ -56,6 +59,15 @@ export default function App() {
 
   const handleSettingsSaved = (newSettings) => {
     setSettings(newSettings);
+  };
+
+  const handleSaveWelcomeKeys = (keys) => {
+    const updated = {
+      ...settings,
+      ...keys,
+    };
+    saveSettings(updated);
+    setSettings(updated);
   };
 
   const handleRecordUpdated = () => {
@@ -387,6 +399,7 @@ export default function App() {
           setActiveTab={setActiveTab}
           settings={settings}
           onToggleFocusMode={() => setIsWallpaperFocusMode(true)}
+          onOpenWelcomeModal={() => setShowWelcomeModal(true)}
         />
 
         <main>
@@ -568,6 +581,13 @@ export default function App() {
           </button>
         </div>
       )}
+
+      <WelcomeModal
+        isOpen={showWelcomeModal}
+        onClose={() => setShowWelcomeModal(false)}
+        onSaveKeys={handleSaveWelcomeKeys}
+        currentSettings={settings}
+      />
     </>
   );
 }

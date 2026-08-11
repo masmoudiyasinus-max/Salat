@@ -1,8 +1,9 @@
 import React from 'react';
-import { Calendar, BarChart3, MessageSquare, Settings, Compass, Eye } from 'lucide-react';
+import { Calendar, BarChart3, MessageSquare, Settings, Compass, Eye, Key } from 'lucide-react';
 
-export default function Header({ activeTab, setActiveTab, settings, onToggleFocusMode }) {
+export default function Header({ activeTab, setActiveTab, settings, onToggleFocusMode, onOpenWelcomeModal }) {
   const hasGemini = Boolean(settings?.geminiApiKey && settings.geminiApiKey.trim());
+  const hasTavily = Boolean(settings?.tavilyApiKey && settings.tavilyApiKey.trim());
 
   return (
     <header className="navbar-header">
@@ -68,13 +69,35 @@ export default function Header({ activeTab, setActiveTab, settings, onToggleFocu
         </button>
       </nav>
 
-      <div className="api-status-badges">
+      <div className="api-status-badges" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <button
+          type="button"
+          onClick={onOpenWelcomeModal}
+          style={{
+            padding: '5px 12px',
+            borderRadius: '9999px',
+            backgroundColor: 'rgba(59, 130, 246, 0.12)',
+            color: 'var(--accent-blue)',
+            border: '1px solid rgba(59, 130, 246, 0.3)',
+            fontSize: '0.78rem',
+            fontWeight: '700',
+            cursor: 'pointer',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '5px',
+          }}
+          title="فتح دليل ومفتاح Tavily و Gemini API"
+        >
+          <Key size={13} />
+          <span>المفاتيح</span>
+        </button>
+
         <div
-          className={`badge-indicator ${hasGemini ? 'active' : 'missing'}`}
-          title={hasGemini ? 'Gemini API مفعل' : 'Gemini API مفتاح غير مضاف'}
+          className={`badge-indicator ${hasTavily ? 'active' : 'missing'}`}
+          title={hasTavily ? 'Tavily API للمزامنة الحية مفعل' : 'Tavily API غير مضاف (المزامنة غير ممكنة)'}
         >
           <span className="pulse-dot"></span>
-          <span>Gemini: {hasGemini ? 'مفعل' : 'غير مضاف'}</span>
+          <span>Tavily: {hasTavily ? 'مفعل' : 'مطلوب'}</span>
         </div>
       </div>
     </header>

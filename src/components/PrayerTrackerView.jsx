@@ -127,6 +127,12 @@ export default function PrayerTrackerView({ settings, onRecordUpdated, onRejectB
         return;
       }
 
+      if (!settings.tavilyApiKey || settings.tavilyApiKey.trim() === '') {
+        setTavilyStatusText('المزامنة الحية غير ممكنة (يلزم توفير مفتاح Tavily API)');
+        setIsFetchingTavily(false);
+        return;
+      }
+
       try {
         setIsFetchingTavily(true);
         setTavilyStatusText('جاري المزامنة التلقائية اليومية...');
@@ -172,6 +178,12 @@ export default function PrayerTrackerView({ settings, onRecordUpdated, onRejectB
   }, [settings.tavilyApiKey, settings.geminiApiKey, settings.prayerSourceUrl, settings.city, settings.country, selectedDate]);
 
   const handleManualRefreshPrayerTimes = async () => {
+    if (!settings.tavilyApiKey || settings.tavilyApiKey.trim() === '') {
+      setTavilyStatusText('المزامنة غير ممكنة: يلزم توفير مفتاح Tavily API في الإعدادات');
+      setIsFetchingTavily(false);
+      return;
+    }
+
     try {
       setIsFetchingTavily(true);
       setTavilyStatusText('جاري التحديث والمزامنة...');
@@ -1050,11 +1062,12 @@ export default function PrayerTrackerView({ settings, onRecordUpdated, onRejectB
         style={{
           marginBottom: '24px',
           padding: '28px 32px',
-          background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.015) 100%)',
-          border: '1px solid rgba(255, 255, 255, 0.18)',
+          background: 'rgba(15, 23, 42, 0.75)',
+          border: '1.5px solid rgba(255, 255, 255, 0.22)',
           borderRadius: 'var(--radius-lg)',
           boxShadow: 'none',
-          backdropFilter: 'blur(20px)',
+          backdropFilter: 'blur(24px)',
+          WebkitBackdropFilter: 'blur(24px)',
           position: 'relative',
         }}
       >
