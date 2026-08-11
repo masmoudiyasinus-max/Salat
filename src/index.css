@@ -228,7 +228,7 @@ body {
   background-color: currentColor;
 }
 
-/* Universal Solid/Dark Background Class for ALL Cards & Frames (No Backdrop Blur) */
+/* Universal Ultra-Crisp Frosted Glassmorphism Class for ALL Cards & Frames */
 .glass-frame,
 .bento-card,
 .navbar-header,
@@ -237,28 +237,19 @@ body {
 .chat-main,
 .prayer-modal-card,
 .prayer-circles-container,
+.active-prayer-hero-card,
 .custom-select-trigger,
-.custom-select-menu,
-.form-input,
-.form-select {
-  background: var(--bg-secondary) !important;
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
-  border: 1px solid rgba(255, 255, 255, 0.12) !important;
-}
-
-/* EXCEPTION: Active Prayer Hero Card ONLY retains frosted glass blur */
-.active-prayer-hero-card {
-  background: rgba(15, 23, 42, 0.75) !important;
-  backdrop-filter: blur(24px) !important;
-  -webkit-backdrop-filter: blur(24px) !important;
-  border: 1.5px solid rgba(255, 255, 255, 0.2) !important;
+.custom-select-menu {
+  background: rgba(15, 23, 42, 0.62) !important;
+  backdrop-filter: blur(20px) !important;
+  -webkit-backdrop-filter: blur(20px) !important;
+  border: 1px solid rgba(255, 255, 255, 0.15) !important;
 }
 
 .bento-card {
   border-radius: var(--radius-lg);
   padding: 24px;
-  box-shadow: var(--shadow-md);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
   transition: border-color 0.2s ease, transform 0.2s ease;
 }
 
@@ -956,9 +947,9 @@ body {
 .prayer-modal-backdrop {
   position: fixed;
   inset: 0;
-  background-color: rgba(0, 0, 0, 0.75);
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
+  background-color: rgba(0, 0, 0, 0.70);
+  backdrop-filter: blur(16px) !important;
+  -webkit-backdrop-filter: blur(16px) !important;
   z-index: 1000;
   display: flex;
   align-items: center;
