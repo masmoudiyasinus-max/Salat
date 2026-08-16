@@ -859,6 +859,24 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
   const heroEditorRef = useRef(null);
   const activeEditorRef = useRef(null);
   const attachedFilesMapRef = useRef({});
+  const [, setContextTick] = useState(0);
+
+  useEffect(() => {
+    const handleContextUpdate = () => {
+      setContextTick((prev) => prev + 1);
+    };
+    window.addEventListener('records-updated', handleContextUpdate);
+    window.addEventListener('nafl-records-updated', handleContextUpdate);
+    window.addEventListener('settings-updated', handleContextUpdate);
+    window.addEventListener('prayer-times-updated', handleContextUpdate);
+
+    return () => {
+      window.removeEventListener('records-updated', handleContextUpdate);
+      window.removeEventListener('nafl-records-updated', handleContextUpdate);
+      window.removeEventListener('settings-updated', handleContextUpdate);
+      window.removeEventListener('prayer-times-updated', handleContextUpdate);
+    };
+  }, []);
 
   useEffect(() => {
     const handler = (e) => {

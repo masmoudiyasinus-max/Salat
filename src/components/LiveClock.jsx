@@ -75,15 +75,17 @@ export default function LiveClock({ timezone, timeFormat = '12', language = 'ar'
       )} هـ`;
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: '18px', flexWrap: 'wrap' }}>
+    <div style={{ display: 'inline-flex', alignItems: 'center', gap: '16px', flexWrap: 'nowrap', whiteSpace: 'nowrap' }}>
       {/* Compact Live Clock */}
       <div
         style={{
-          fontSize: 'clamp(1.8rem, 3.2vw, 2.7rem)',
+          fontSize: 'clamp(1.7rem, 3vw, 2.5rem)',
           fontWeight: '800',
           color: 'var(--text-primary)',
           lineHeight: '1',
           letterSpacing: '-0.02em',
+          whiteSpace: 'nowrap',
+          flexShrink: 0,
         }}
       >
         {liveClockTime}
@@ -93,28 +95,32 @@ export default function LiveClock({ timezone, timeFormat = '12', language = 'ar'
       <div
         style={{
           width: '1px',
-          height: '38px',
+          height: '36px',
           backgroundColor: 'var(--border-subtle)',
+          flexShrink: 0,
         }}
       />
 
       {/* Dates: Gregorian & Hijri */}
-      <div style={{ textAlign: isEn ? 'left' : 'right' }}>
+      <div style={{ textAlign: isEn ? 'left' : 'right', whiteSpace: 'nowrap', display: 'flex', flexDirection: 'column', gap: '2px', flexShrink: 0 }}>
         <div
           style={{
-            fontSize: '1.15rem',
+            fontSize: '1.05rem',
             fontWeight: '700',
             color: 'var(--text-primary)',
-            marginBottom: '2px',
+            lineHeight: 1.2,
+            whiteSpace: 'nowrap',
           }}
         >
           {gregorianDateFormatted}
         </div>
         <div
           style={{
-            fontSize: '1.05rem',
+            fontSize: '0.95rem',
             fontWeight: '600',
             color: 'var(--text-secondary)',
+            lineHeight: 1.2,
+            whiteSpace: 'nowrap',
           }}
         >
           <span>{hijriDateFormatted}</span>

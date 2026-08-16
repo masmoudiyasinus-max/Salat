@@ -1,12 +1,15 @@
 import Papa from 'papaparse';
 
-const KEYS = {
+export const KEYS = {
   RECORDS: 'prayer_tracker_records',
   SETTINGS: 'prayer_tracker_settings',
   TIMES: 'prayer_tracker_times_cache',
   CHAT_SESSIONS: 'prayer_tracker_chat_sessions',
   ACTIVE_SESSION_ID: 'prayer_tracker_active_session_id',
   NAFL_RECORDS: 'prayer_tracker_nafl_records',
+  RE_TOGGLE_HISTORY: 'prayer_tracker_re_toggle_history',
+  REJECTED_BG_PREFIX: 'prayer_tracker_rejected_bg_',
+  ACTIVE_BG_PREFIX: 'prayer_tracker_active_bg_',
 };
 
 export function toWesternDigits(str) {
@@ -99,7 +102,9 @@ export const NAFL_PRAYERS = [
 ];
 
 export function getCurrentObligatoryPrayerId(prayerTimes, safeNow = new Date()) {
-  if (!prayerTimes) return 'Fajr';
+  if (!prayerTimes || !prayerTimes.Fajr || !prayerTimes.Dhuhr || !prayerTimes.Asr || !prayerTimes.Maghrib || !prayerTimes.Isha) {
+    return 'Fajr';
+  }
   const parseMins = (t) => {
     if (!t || typeof t !== 'string' || !t.includes(':')) return -1;
     const [h, m] = t.split(':').map(Number);
@@ -107,11 +112,15 @@ export function getCurrentObligatoryPrayerId(prayerTimes, safeNow = new Date()) 
     return h * 60 + m;
   };
   const currentMins = safeNow.getHours() * 60 + safeNow.getMinutes();
-  const fajrMins = parseMins(prayerTimes.Fajr) !== -1 ? parseMins(prayerTimes.Fajr) : 4 * 60 + 15;
-  const dhuhrMins = parseMins(prayerTimes.Dhuhr) !== -1 ? parseMins(prayerTimes.Dhuhr) : 12 * 60 + 30;
-  const asrMins = parseMins(prayerTimes.Asr) !== -1 ? parseMins(prayerTimes.Asr) : 16 * 60;
-  const maghribMins = parseMins(prayerTimes.Maghrib) !== -1 ? parseMins(prayerTimes.Maghrib) : 19 * 60 + 30;
-  const ishaMins = parseMins(prayerTimes.Isha) !== -1 ? parseMins(prayerTimes.Isha) : 20 * 60 + 45;
+  const fajrMins = parseMins(prayerTimes.Fajr);
+  const dhuhrMins = parseMins(prayerTimes.Dhuhr);
+  const asrMins = parseMins(prayerTimes.Asr);
+  const maghribMins = parseMins(prayerTimes.Maghrib);
+  const ishaMins = parseMins(prayerTimes.Isha);
+
+  if (fajrMins === -1 || dhuhrMins === -1 || asrMins === -1 || maghribMins === -1 || ishaMins === -1) {
+    return 'Fajr';
+  }
 
   if (currentMins >= fajrMins && currentMins < dhuhrMins) {
     return 'Fajr';
@@ -129,8 +138,8 @@ export function getCurrentObligatoryPrayerId(prayerTimes, safeNow = new Date()) 
 }
 
 export function calculateNightTimes(maghribTimeStr, fajrTimeStr) {
-  if (!maghribTimeStr || !fajrTimeStr) {
-    return { midnight: '01:00', lastThird: '02:30', nightDurationMinutes: 510 };
+  if (!maghribTimeStr || !fajrTimeStr || !maghribTimeStr.includes(':') || !fajrTimeStr.includes(':')) {
+    return { midnight: '', midnight12: '', lastThird: '', lastThird12: '', nightDurationMinutes: 0 };
   }
 
   const [mH, mM] = maghribTimeStr.split(':').map(Number);
@@ -259,8 +268,84 @@ export function saveRecords(records) {
 export function clearAllRecords() {
   saveRecords([]);
   saveNaflRecords([]);
-  localStorage.removeItem('prayer_re_toggle_history');
+  localStorage.removeItem(KEYS.RE_TOGGLE_HISTORY);
   return [];
+}
+
+export function exportFullUserDataJSON() {
+  const payload = {
+    version: 1,
+    app: 'HabitTracker_Salat',
+    exportedAt: new Date().toISOString(),
+    settings: getSettings(),
+    records: getRecords(),
+    naflRecords: getNaflRecords(),
+    chatSessions: getChatSessions(),
+    activeSessionId: getActiveSessionId(),
+    cachedTimes: getPrayerTimesCache(),
+  };
+  return JSON.stringify(payload, null, 2);
+}
+
+export function importFullUserDataJSON(jsonString) {
+  if (!jsonString || typeof jsonString !== 'string') {
+    throw new Error('ملف النسخة الاحتياطية فارغ أو غير صالح');
+  }
+
+  const data = JSON.parse(jsonString);
+  if (!data || typeof data !== 'object') {
+    throw new Error('تنسيق النسخة الاحتياطية غير متوافق');
+  }
+
+  if (data.settings && typeof data.settings === 'object') {
+    saveSettings(data.settings);
+  }
+  if (Array.isArray(data.records)) {
+    saveRecords(data.records);
+  }
+  if (Array.isArray(data.naflRecords)) {
+    saveNaflRecords(data.naflRecords);
+  }
+  if (Array.isArray(data.chatSessions)) {
+    saveChatSessions(data.chatSessions);
+  }
+  if (data.activeSessionId && typeof data.activeSessionId === 'string') {
+    saveActiveSessionId(data.activeSessionId);
+  }
+  if (data.cachedTimes && typeof data.cachedTimes === 'object') {
+    savePrayerTimesCache(data.cachedTimes);
+  }
+
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('records-updated', { detail: getRecords() }));
+    window.dispatchEvent(new CustomEvent('nafl-records-updated', { detail: getNaflRecords() }));
+    window.dispatchEvent(new CustomEvent('settings-updated', { detail: getSettings() }));
+    window.dispatchEvent(new CustomEvent('prayer-times-updated', { detail: getPrayerTimesCache() }));
+  }
+
+  return true;
+}
+
+export function clearEntireAppData() {
+  clearAllRecords();
+  localStorage.removeItem(KEYS.SETTINGS);
+  localStorage.removeItem(KEYS.TIMES);
+  localStorage.removeItem(KEYS.CHAT_SESSIONS);
+  localStorage.removeItem(KEYS.ACTIVE_SESSION_ID);
+  localStorage.removeItem(KEYS.RE_TOGGLE_HISTORY);
+
+  Object.keys(localStorage).forEach((k) => {
+    if (k.startsWith('bg_rejected_imgs_') || k.startsWith('active_bg_') || k.startsWith('prayer_tracker_')) {
+      localStorage.removeItem(k);
+    }
+  });
+
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('records-updated', { detail: [] }));
+    window.dispatchEvent(new CustomEvent('nafl-records-updated', { detail: [] }));
+    window.dispatchEvent(new CustomEvent('settings-updated', { detail: getSettings() }));
+    window.dispatchEvent(new CustomEvent('prayer-times-updated', { detail: getPrayerTimesCache() }));
+  }
 }
 
 export function upsertRecord(newRecord) {

@@ -1,4 +1,5 @@
-// Service for 5-slot daily location & weather background image fetching & caching with Rejection & Replacement support
+// Real Weather & Location Scenery Service (Powered by Open-Meteo & Tavily Search)
+import { toWesternDigits, KEYS } from './storage';
 
 export function getCurrentTimeSlot(cityDate = new Date(), lang = 'ar') {
   const isEn = lang === 'en';
@@ -16,38 +17,117 @@ export function getCurrentTimeSlot(cityDate = new Date(), lang = 'ar') {
   }
 }
 
-export function getWeatherCommentary(city, slotId, lang = 'ar') {
+// WMO Weather Interpretation Code Table
+function getWmoWeatherDescription(wmoCode, lang = 'ar') {
   const isEn = lang === 'en';
-  const cName = city || (isEn ? 'your city' : 'مدينتك');
-  if (isEn) {
-    switch (slotId) {
-      case 'slot_1_dawn':
-        return `Serene dawn and refreshing breeze in ${cName}`;
-      case 'slot_2_midday':
-        return `Sunny and vibrant atmosphere in ${cName}`;
-      case 'slot_3_afternoon':
-        return `Peaceful afternoon as the sun descends in ${cName}`;
-      case 'slot_4_evening':
-        return `Pleasant evening ambiance in ${cName}`;
-      case 'slot_5_night':
-      default:
-        return `Calm night and clear skies in ${cName}`;
-    }
+  const code = Number(wmoCode);
+  switch (code) {
+    case 0:
+      return isEn ? 'Clear sky' : 'سماء صحوة صافية';
+    case 1:
+      return isEn ? 'Mainly clear' : 'أجواء صافية غالباً';
+    case 2:
+      return isEn ? 'Partly cloudy' : 'أجواء غائمة جزئياً';
+    case 3:
+      return isEn ? 'Overcast' : 'سماء ملبدة بالغيوم';
+    case 45:
+    case 48:
+      return isEn ? 'Foggy atmosphere' : 'أجواء ضبابية';
+    case 51:
+    case 53:
+    case 55:
+      return isEn ? 'Light drizzle' : 'رذاذ مطري خفيف';
+    case 61:
+    case 63:
+    case 65:
+      return isEn ? 'Rainy weather' : 'أجواء ماطرة مباركة';
+    case 71:
+    case 73:
+    case 75:
+      return isEn ? 'Snowfall' : 'تساقط للثلوج';
+    case 80:
+    case 81:
+    case 82:
+      return isEn ? 'Rain showers' : 'زخات مطرية منعشة';
+    case 95:
+    case 96:
+    case 99:
+      return isEn ? 'Thunderstorm' : 'أجواء رعدية ماطرة';
+    default:
+      return isEn ? 'Fair atmosphere' : 'أجواء مستقرة ومعتدلة';
+  }
+}
+
+/**
+ * Fetches real, live weather metrics (temperature, condition) from Open-Meteo Free API.
+ */
+export async function fetchLiveWeatherData(city, country = '', lang = 'ar') {
+  if (!city || city.trim() === '') {
+    return {
+      available: false,
+      commentary: lang === 'en' ? 'Location not specified' : 'لم يتم تحديد المدينة بعد',
+    };
   }
 
-  switch (slotId) {
-    case 'slot_1_dawn':
-      return `أجواء فجرية خاشعة ولطيفة في ${cName}`;
-    case 'slot_2_midday':
-      return `طقس مشمس وأجواء مفعمة بالحيوية في ${cName}`;
-    case 'slot_3_afternoon':
-      return `أجواء هادئة مع ميلان الشمس للغروب في ${cName}`;
-    case 'slot_4_evening':
-      return `أجواء مسائية عطرة ومستقرة في ${cName}`;
-    case 'slot_5_night':
-    default:
-      return `أجواء ليلية ساكنة وصفاء في السماء في ${cName}`;
+  const isEn = lang === 'en';
+  const cleanCity = city.trim();
+
+  try {
+    // 1. Geocode City to obtain accurate Coordinates via Open-Meteo
+    const geoUrl = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(cleanCity)}&count=1&language=en&format=json`;
+    const geoRes = await fetch(geoUrl);
+    if (!geoRes.ok) throw new Error('Geocoding service unavailable');
+    
+    const geoData = await geoRes.json();
+    if (!geoData.results || geoData.results.length === 0) {
+      return {
+        available: false,
+        commentary: isEn ? `Atmospheric vibes in ${cleanCity}` : `أجواء طيبة ومباركة في ${cleanCity}`,
+      };
+    }
+
+    const { latitude, longitude } = geoData.results[0];
+
+    // 2. Fetch real current weather
+    const weatherUrl = `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,weather_code,is_day,relative_humidity_2m`;
+    const weatherRes = await fetch(weatherUrl);
+    if (!weatherRes.ok) throw new Error('Weather API request failed');
+
+    const weatherData = await weatherRes.json();
+    const current = weatherData.current;
+    if (!current) throw new Error('Current weather payload missing');
+
+    const temp = Math.round(current.temperature_2m);
+    const wCode = current.weather_code;
+    const condText = getWmoWeatherDescription(wCode, lang);
+
+    const formattedTemp = isEn ? `${temp}°C` : `${toWesternDigits(temp)}°م`;
+    const commentary = isEn
+      ? `${condText} with ${formattedTemp} in ${cleanCity}`
+      : `${condText} ودرجة الحرارة ${formattedTemp} في ${cleanCity}`;
+
+    return {
+      available: true,
+      temperature: temp,
+      conditionCode: wCode,
+      conditionText: condText,
+      commentary,
+    };
+  } catch (err) {
+    console.warn('Real weather fetching fallback:', err.message);
+    return {
+      available: false,
+      commentary: isEn ? `Atmospheric vibes in ${cleanCity}` : `أجواء طيبة ومباركة في ${cleanCity}`,
+    };
   }
+}
+
+export function getWeatherCommentary(city, slotId, lang = 'ar') {
+  const isEn = lang === 'en';
+  if (!city) {
+    return isEn ? 'Please select your city for weather updates' : 'يرجى تحديد المدينة لعرض الطقس';
+  }
+  return isEn ? `Atmospheric vibes in ${city}` : `أجواء طيبة ومباركة في ${city}`;
 }
 
 export async function downloadRawImage(imageUrl, filename = 'wallpaper.jpg') {
@@ -80,44 +160,52 @@ function checkImageLoadable(srcUrl) {
 export async function fetchLocationWeatherBgImage(settings, cityDate = new Date(), forceNext = false) {
   const lang = settings?.language || 'ar';
   const isEn = lang === 'en';
-  const city = settings?.city || 'Makkah';
+  const city = settings?.city || '';
   const country = settings?.country || '';
   const apiKey = settings?.tavilyApiKey || '';
   const slot = getCurrentTimeSlot(cityDate, lang);
-  const commentary = getWeatherCommentary(city, slot.id, lang);
 
-  // Retrieve rejected image URLs from localStorage
-  const rejectedKey = `bg_rejected_imgs_${city.toLowerCase().replace(/\s+/g, '_')}`;
+  // Fetch real weather data dynamically
+  let weatherResult = { available: false, commentary: isEn ? 'Nature Scenery' : 'مشاهد طبيعية' };
+  if (city) {
+    weatherResult = await fetchLiveWeatherData(city, country, lang);
+  }
+
+  const commentary = weatherResult.commentary;
+
+  // Retrieve rejected image URLs from localStorage (namespaced under KEYS)
+  const legacyRejectedKey = `bg_rejected_imgs_${(city || 'general').toLowerCase().replace(/\s+/g, '_')}`;
+  const rejectedKey = `${KEYS.REJECTED_BG_PREFIX}${(city || 'general').toLowerCase().replace(/\s+/g, '_')}`;
   let rejectedList = [];
   try {
-    rejectedList = JSON.parse(localStorage.getItem(rejectedKey) || '[]');
+    rejectedList = JSON.parse(localStorage.getItem(rejectedKey) || localStorage.getItem(legacyRejectedKey) || '[]');
   } catch (e) {
     rejectedList = [];
   }
 
-  // If user clicks "Reject Image", append active image to rejected list
-  const activeKey = `active_bg_${city.toLowerCase().replace(/\s+/g, '_')}`;
-  const cachedUrl = localStorage.getItem(activeKey);
+  const legacyActiveKey = `active_bg_${(city || 'general').toLowerCase().replace(/\s+/g, '_')}`;
+  const activeKey = `${KEYS.ACTIVE_BG_PREFIX}${(city || 'general').toLowerCase().replace(/\s+/g, '_')}`;
+  const cachedUrl = localStorage.getItem(activeKey) || localStorage.getItem(legacyActiveKey);
   if (cachedUrl && !forceNext && !rejectedList.includes(cachedUrl)) {
     return {
       imageUrl: cachedUrl,
       slotName: slot.nameAr,
       weatherCommentary: commentary,
-      source: apiKey
-        ? (isEn ? `Live Web Search - ${city}` : `بحث الويب الحقيقي - ${city}`)
-        : (isEn ? `Nature Gallery - ${city}` : `معرض المشاهد الطبيعية - ${city}`),
+      source: apiKey && city
+        ? (isEn ? `Live Web Scenery - ${city}` : `صور حية عبر البحث - ${city}`)
+        : (isEn ? 'Curated Nature Gallery' : 'معرض المشاهد الطبيعية'),
       isCached: true,
     };
   }
 
-  const currentActive = localStorage.getItem(activeKey);
+  const currentActive = localStorage.getItem(activeKey) || localStorage.getItem(legacyActiveKey);
   if (forceNext && currentActive && !rejectedList.includes(currentActive)) {
     rejectedList.push(currentActive);
     localStorage.setItem(rejectedKey, JSON.stringify(rejectedList));
   }
 
-  // 1. Tavily Web Image Search if Key provided
-  if (apiKey && apiKey.trim() !== '') {
+  // 1. Tavily Web Image Search if Key and City provided
+  if (apiKey && apiKey.trim() !== '' && city) {
     try {
       const response = await fetch('https://api.tavily.com/search', {
         method: 'POST',
@@ -147,7 +235,7 @@ export async function fetchLocationWeatherBgImage(settings, cityDate = new Date(
                   imageUrl: imgUrl,
                   slotName: slot.nameAr,
                   weatherCommentary: commentary,
-                  source: isEn ? `Live Web Search - ${city}` : `بحث الويب الحقيقي - ${city}`,
+                  source: isEn ? `Live Web Search - ${city}` : `صور حية عبر البحث - ${city}`,
                   isCached: false,
                 };
               }
@@ -160,7 +248,7 @@ export async function fetchLocationWeatherBgImage(settings, cityDate = new Date(
     }
   }
 
-  // Fallback candidate photos (filtering out rejected images)
+  // Fallback candidate photos (Curated high-res nature scenery)
   const fallbacks = [
     'https://images.unsplash.com/photo-1470240731273-7821a6eeb6bd?auto=format&fit=crop&w=1920&q=80',
     'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1920&q=80',
@@ -177,7 +265,7 @@ export async function fetchLocationWeatherBgImage(settings, cityDate = new Date(
     imageUrl: candidate,
     slotName: slot.nameAr,
     weatherCommentary: commentary,
-    source: isEn ? 'Nature Gallery Unsplash HD' : 'معرض المشاهد الطبيعية عالية الدقة Unsplash HD',
+    source: isEn ? 'Curated Nature Gallery HD' : 'معرض المشاهد الطبيعية HD',
     isCached: false,
   };
 }

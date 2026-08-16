@@ -83,7 +83,7 @@ export default function DashboardView({ settings }) {
   const stats = useMemo(() => computeSummaryStats(filteredRecords), [filteredRecords]);
 
   const nightTimes = useMemo(() => {
-    return calculateNightTimes(prayerTimes?.Maghrib || '19:30', prayerTimes?.Fajr || '04:15');
+    return calculateNightTimes(prayerTimes?.Maghrib, prayerTimes?.Fajr);
   }, [prayerTimes]);
 
   // Generate 365-day Heatmap Data (52 weeks x 7 days)

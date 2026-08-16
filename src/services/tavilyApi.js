@@ -1,4 +1,43 @@
 import { parsePrayerTimesWithGeminiAI } from './geminiApi';
+import { getSettings } from './storage';
+
+export function getCalculationMethodForCountry(countryName) {
+  if (!countryName || typeof countryName !== 'string') return 3;
+  const c = countryName.trim().toLowerCase();
+
+  // Saudi Arabia & Gulf: Umm al-Qura (Method 4)
+  if (c.includes('saudi') || c.includes('سعودية') || c.includes('emirates') || c.includes('إمارات') || c.includes('qatar') || c.includes('قطر') || c.includes('kuwait') || c.includes('كويت') || c.includes('bahrain') || c.includes('بحرين') || c.includes('oman') || c.includes('عمان') || c.includes('yemen') || c.includes('يمن')) {
+    return 4;
+  }
+
+  // Egypt, Sudan, Levant, Syria, Lebanon, Palestine, Jordan, Iraq: Egyptian General Authority (Method 5)
+  if (c.includes('egypt') || c.includes('مصر') || c.includes('sudan') || c.includes('سودان') || c.includes('palestin') || c.includes('فلسطين') || c.includes('jordan') || c.includes('أردن') || c.includes('syria') || c.includes('سوريا') || c.includes('lebanon') || c.includes('لبنان') || c.includes('iraq') || c.includes('عراق')) {
+    return 5;
+  }
+
+  // Tunisia, Algeria, Morocco, Mauritania, Libya: Diyanet / Maghreb (Method 13)
+  if (c.includes('tunis') || c.includes('تونس') || c.includes('alger') || c.includes('جزائر') || c.includes('morocco') || c.includes('مغرب') || c.includes('libya') || c.includes('ليبيا') || c.includes('mauritania') || c.includes('موريتانيا')) {
+    return 13;
+  }
+
+  // North America (USA, Canada): ISNA (Method 2)
+  if (c.includes('united states') || c.includes('usa') || c.includes('أمريكا') || c.includes('canada') || c.includes('كندا')) {
+    return 2;
+  }
+
+  // Pakistan, India, Bangladesh, Afghanistan: University of Islamic Sciences, Karachi (Method 1)
+  if (c.includes('pakistan') || c.includes('باكستان') || c.includes('india') || c.includes('هند') || c.includes('bangladesh') || c.includes('بنغلاديش') || c.includes('afghanistan') || c.includes('أفغانستان')) {
+    return 1;
+  }
+
+  // Turkey: Diyanet (Method 13)
+  if (c.includes('turkey') || c.includes('تركيا') || c.includes('türkiye')) {
+    return 13;
+  }
+
+  // Default: Muslim World League (Method 3)
+  return 3;
+}
 
 export async function fetchPrayerTimesFromTavily(
   apiKey,
@@ -116,8 +155,9 @@ export async function fetchPrayerTimesFromTavily(
       }
 
       if (city && country) {
+        const methodNum = getCalculationMethodForCountry(country);
         const fallbackRes = await fetch(
-          `https://api.aladhan.com/v1/timingsByCity${datePath}?city=${encodeURIComponent(city)}&country=${encodeURIComponent(country)}&method=3`
+          `https://api.aladhan.com/v1/timingsByCity${datePath}?city=${encodeURIComponent(city)}&country=${encodeURIComponent(country)}&method=${methodNum}`
         );
         if (fallbackRes.ok) {
           const json = await fallbackRes.json();

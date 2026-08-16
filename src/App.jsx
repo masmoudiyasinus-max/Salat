@@ -5,7 +5,8 @@ import PrayerTrackerView from './components/PrayerTrackerView';
 import DashboardView from './components/DashboardView';
 import ChatView from './components/ChatView';
 import SettingsView from './components/SettingsView';
-import { getSettings, saveSettings } from './services/storage';
+import { getSettings, saveSettings, getPrayerTimesCache } from './services/storage';
+import { requestNotificationsPermission, checkAndNotifyCurrentAdhan } from './services/permissionService';
 
 export function extractYouTubeId(url) {
   if (!url) return '';
@@ -69,6 +70,22 @@ export default function App() {
     window.addEventListener('settings-updated', handleSettingsUpdated);
     return () => window.removeEventListener('settings-updated', handleSettingsUpdated);
   }, []);
+
+  // Check Notifications & Adhan Alerts on App Launch
+  useEffect(() => {
+    if ('Notification' in window && Notification.permission === 'default') {
+      requestNotificationsPermission();
+    }
+
+    // Check for Adhan alert every 30 seconds
+    const adhanTimer = setInterval(() => {
+      if (!document.hidden) {
+        checkAndNotifyCurrentAdhan(getPrayerTimesCache(), settings?.language);
+      }
+    }, 30000);
+
+    return () => clearInterval(adhanTimer);
+  }, [settings?.language]);
 
   const iframeRef = useRef(null);
   const prevIframeRef = useRef(null);
@@ -611,6 +628,7 @@ export default function App() {
               onRecordUpdated={handleRecordUpdated}
               isAudioMuted={isAudioMuted}
               onToggleAudio={handleToggleAudio}
+              onNavigateToSettings={() => setActiveTab('settings')}
             />
           )}
 

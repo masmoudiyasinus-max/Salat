@@ -19,9 +19,10 @@ import {
   Volume2,
   VolumeX,
   Flame,
-  AlertTriangle,
   Info,
   BookOpen,
+  Navigation,
+  Settings,
 } from 'lucide-react';
 import {
   PRAYER_NAMES,
@@ -39,8 +40,10 @@ import {
   computeSummaryStats,
   formatTimeDisplay,
   getCurrentObligatoryPrayerId,
+  KEYS,
 } from '../services/storage';
 import { fetchPrayerTimesFromTavily } from '../services/tavilyApi';
+import { requestFreshLocationFromScratch } from '../services/permissionService';
 import { getWeatherCommentary, getCurrentTimeSlot } from '../services/bgImageService';
 import { getTranslation } from '../services/i18n';
 import LiveClock from './LiveClock';
@@ -65,7 +68,7 @@ const PRAYER_ICONS = {
   Isha: Moon,
 };
 
-export default function PrayerTrackerView({ settings, onRecordUpdated, onRejectBgImage, isAudioMuted, onToggleAudio }) {
+export default function PrayerTrackerView({ settings, onRecordUpdated, onRejectBgImage, isAudioMuted, onToggleAudio, onNavigateToSettings }) {
   const lang = settings?.language || 'ar';
   const t = (k, fb) => getTranslation(lang, k, fb);
   const [prayerTimes, setPrayerTimes] = useState(getPrayerTimesCache);
@@ -93,6 +96,22 @@ export default function PrayerTrackerView({ settings, onRecordUpdated, onRejectB
 
   const [showFridayHadithModal, setShowFridayHadithModal] = useState(false);
   const [testTimeMins, setTestTimeMins] = useState(null);
+  const [isDetectingLocationQuick, setIsDetectingLocationQuick] = useState(false);
+
+  const handleQuickAutoDetectLocation = async () => {
+    setIsDetectingLocationQuick(true);
+    const res = await requestFreshLocationFromScratch((detected) => {
+      setPrayerTimes(getPrayerTimesCache());
+    });
+    setIsDetectingLocationQuick(false);
+    if (!res.success) {
+      if (res.error === 'denied') {
+        alert(lang === 'en' ? 'Location permission was denied in your browser. Please select your city from Settings.' : 'تم رفض إذن الوصول للموقع في المتصفح، يرجى اختيار مدينتك من شاشة الإعدادات.');
+      } else {
+        alert(lang === 'en' ? 'Could not detect live location. Please select your city from Settings.' : 'تعذر استقبال إشارة الموقع المباشرة، يرجى اختيار مدينتك من شاشة الإعدادات.');
+      }
+    }
+  };
 
   const [nowTime, setNowTime] = useState(() => {
     const d = getCityNowDate(prayerTimes?.timezone);
@@ -255,12 +274,27 @@ export default function PrayerTrackerView({ settings, onRecordUpdated, onRejectB
 
   // Night Calculation (Maghrib to Fajr)
   const nightTimes = useMemo(
-    () => calculateNightTimes(prayerTimes?.Maghrib || '19:30', prayerTimes?.Fajr || '04:15'),
+    () => calculateNightTimes(prayerTimes?.Maghrib, prayerTimes?.Fajr),
     [prayerTimes?.Maghrib, prayerTimes?.Fajr]
   );
 
   // Live Countup and Countdown Timers Computation for All Islamic Timeline Events (Continuous Rolling Timeline)
   const timerInfo = useMemo(() => {
+    if (!prayerTimes?.Fajr || !prayerTimes?.Sunrise || !prayerTimes?.Dhuhr || !prayerTimes?.Asr || !prayerTimes?.Maghrib || !prayerTimes?.Isha) {
+      return {
+        currentEvent: null,
+        nextEvent: null,
+        currentPrayerId: null,
+        currentEventLabel: '',
+        nextEventLabel: '',
+        currentAdhanTime: '',
+        nextAdhanTime: '',
+        nextEventDate: null,
+        prevEventDate: null,
+        isRollingCycle: false,
+      };
+    }
+
     const parseEventDateTime = (timeStr, dayOffset = 0) => {
       const d = new Date(safeNow.getTime());
       d.setDate(d.getDate() + dayOffset);
@@ -271,12 +305,12 @@ export default function PrayerTrackerView({ settings, onRecordUpdated, onRejectB
 
     const buildDailyEvents = (dayOffset) => {
       const pTimes = prayerTimes || {};
-      const fajrT = pTimes.Fajr || '04:15';
-      const sunriseT = pTimes.Sunrise || '05:45';
-      const dhuhrT = pTimes.Dhuhr || '12:30';
-      const asrT = pTimes.Asr || '16:00';
-      const maghribT = pTimes.Maghrib || '19:30';
-      const ishaT = pTimes.Isha || '20:44';
+      const fajrT = pTimes.Fajr;
+      const sunriseT = pTimes.Sunrise;
+      const dhuhrT = pTimes.Dhuhr;
+      const asrT = pTimes.Asr;
+      const maghribT = pTimes.Maghrib;
+      const ishaT = pTimes.Isha;
 
       const nTimes = calculateNightTimes(maghribT, fajrT);
       const midT = nTimes.midnight || '00:08';
@@ -400,8 +434,10 @@ export default function PrayerTrackerView({ settings, onRecordUpdated, onRejectB
       return { desc: 'عن عقبة بن عامر رضي الله عنه قال: «ثَلَاثُ سَاعَاتٍ كَانَ رَسُولُ اللهِ صَلَّى اللهُ عَلَيْهِ وَسَلَّمَ يَنْهَانَا أَنْ نُصَلِّيَ فِيهِنَّ، أَوْ أَنْ نَقْبُرَ فِيهِنَّ مَوْتَانَا: حِينَ تَطْلُعُ الشَّمْسُ بَازِغَةً حَتَّى تَرْتَفِعَ، وَحِينَ يَقُومُ قَائِمُ الظَّهِيرَةِ حَتَّى تَمِيلَ الشَّمْسُ، وَحِينَ تَضَيَّفُ الشَّمْسُ لِلْغُرُوبِ حَتَّى تَغْرُبَ»' };
     }
 
+    if (!prayerTimes?.Fajr || !prayerTimes?.Sunrise || !prayerTimes?.Dhuhr || !prayerTimes?.Maghrib) return null;
+
     const isTesting = testTimeMins !== null;
-    const [fH, fM] = (prayerTimes.Fajr || '04:15').split(':').map(Number);
+    const [fH, fM] = prayerTimes.Fajr.split(':').map(Number);
     const fajr = fH * 60 + fM;
     const fajrRec = (dateRecords || []).find(r => r.prayer_name === 'Fajr');
     const fajrPerformed = isTesting || (fajrRec && (fajrRec.status === 'on_time' || fajrRec.status === 'late' || fajrRec.status === 'qada'));
@@ -409,7 +445,7 @@ export default function PrayerTrackerView({ settings, onRecordUpdated, onRejectB
       return { desc: 'عن أبي سعيد الخدري رضي الله عنه قال: سمعت رسول الله صلى الله عليه وسلم يقول: «لا صَلاةَ بَعْدَ الصُّبْحِ حَتَّى تَرْتَفِعَ الشَّمْسُ، وَلا صَلاةَ بَعْدَ العَصْرِ حَتَّى تَغِيبَ الشَّمْسُ»' };
     }
 
-    const [aH, aM] = (prayerTimes.Asr || '15:30').split(':').map(Number);
+    const [aH, aM] = (prayerTimes.Asr || prayerTimes.Dhuhr).split(':').map(Number);
     const asr = aH * 60 + aM;
     const asrRec = (dateRecords || []).find(r => r.prayer_name === 'Asr');
     const asrPerformed = isTesting || (asrRec && (asrRec.status === 'on_time' || asrRec.status === 'late' || asrRec.status === 'qada'));
@@ -427,8 +463,8 @@ export default function PrayerTrackerView({ settings, onRecordUpdated, onRejectB
   const computeLineProgressPct = () => {
     if (!prayerTimes?.Fajr || !prayerTimes?.Isha) return 0;
 
-    const [fH, fM] = (prayerTimes.Fajr || '04:15').split(':').map(Number);
-    const [iH, iM] = (prayerTimes.Isha || '20:44').split(':').map(Number);
+    const [fH, fM] = prayerTimes.Fajr.split(':').map(Number);
+    const [iH, iM] = prayerTimes.Isha.split(':').map(Number);
 
     const fajrMins = fH * 60 + fM;
     const ishaMins = iH * 60 + iM;
@@ -460,8 +496,9 @@ export default function PrayerTrackerView({ settings, onRecordUpdated, onRejectB
 
   // Helper to determine if Shariah Midnight (منتصف الليل الشرعي) has passed
   const isMidnightArrived = () => {
-    const maghribT = prayerTimes?.Maghrib || '19:30';
-    const fajrT = prayerTimes?.Fajr || '04:15';
+    if (!prayerTimes?.Maghrib || !prayerTimes?.Fajr) return false;
+    const maghribT = prayerTimes.Maghrib;
+    const fajrT = prayerTimes.Fajr;
     const nTimes = calculateNightTimes(maghribT, fajrT);
 
     const [mH, mM] = maghribT.split(':').map(Number);
@@ -496,7 +533,8 @@ export default function PrayerTrackerView({ settings, onRecordUpdated, onRejectB
     const currentM = nowTime.getMinutes();
     const currentMins = currentH * 60 + currentM;
 
-    const [fH, fM] = (prayerTimes?.Fajr || '04:15').split(':').map(Number);
+    if (!prayerTimes?.Fajr) return true;
+    const [fH, fM] = prayerTimes.Fajr.split(':').map(Number);
     const fajrMins = fH * 60 + fM;
 
     // Post-midnight / early morning before Fajr (00:00 to Fajr): All past day prayers & Isha are 100% unlocked!
@@ -613,7 +651,7 @@ export default function PrayerTrackerView({ settings, onRecordUpdated, onRejectB
   // Persistent Re-toggle History Manager (track: performed -> cancelled -> re-performed)
   const getToggleHistory = () => {
     try {
-      const raw = localStorage.getItem('prayer_re_toggle_history');
+      const raw = localStorage.getItem(KEYS.RE_TOGGLE_HISTORY) || localStorage.getItem('prayer_re_toggle_history');
       return raw ? JSON.parse(raw) : {};
     } catch (e) {
       return {};
@@ -622,7 +660,7 @@ export default function PrayerTrackerView({ settings, onRecordUpdated, onRejectB
 
   const saveToggleHistory = (historyObj) => {
     try {
-      localStorage.setItem('prayer_re_toggle_history', JSON.stringify(historyObj));
+      localStorage.setItem(KEYS.RE_TOGGLE_HISTORY, JSON.stringify(historyObj));
     } catch (e) {}
   };
 
@@ -762,18 +800,22 @@ export default function PrayerTrackerView({ settings, onRecordUpdated, onRejectB
     const idx = NAFL_PRAYERS.findIndex((n) => n.id === naflId);
     if (idx === -1) return 'missed';
 
+    if (!prayerTimes?.Fajr || !prayerTimes?.Sunrise || !prayerTimes?.Dhuhr || !prayerTimes?.Maghrib || !prayerTimes?.Isha) {
+      return 'unarrived';
+    }
+
     const getNaflTimeMins = (nId) => {
-      if (!prayerTimes) return 0;
       const parseMins = (tStr) => {
-        const [h, m] = (tStr || '12:00').split(':').map(Number);
+        if (!tStr || !tStr.includes(':')) return 0;
+        const [h, m] = tStr.split(':').map(Number);
         return h * 60 + m;
       };
-      const fajr = parseMins(prayerTimes.Fajr || '04:15');
-      const sunrise = parseMins(prayerTimes.Sunrise || '05:45');
-      const dhuhr = parseMins(prayerTimes.Dhuhr || '12:30');
-      const maghrib = parseMins(prayerTimes.Maghrib || '19:30');
-      const isha = parseMins(prayerTimes.Isha || '20:44');
-      const lastThird = parseMins(nightTimes.lastThird || '01:25');
+      const fajr = parseMins(prayerTimes.Fajr);
+      const sunrise = parseMins(prayerTimes.Sunrise);
+      const dhuhr = parseMins(prayerTimes.Dhuhr);
+      const maghrib = parseMins(prayerTimes.Maghrib);
+      const isha = parseMins(prayerTimes.Isha);
+      const lastThird = parseMins(nightTimes.lastThird);
 
       switch (nId) {
         case 'Sunnah_Fajr': return fajr;
@@ -790,7 +832,7 @@ export default function PrayerTrackerView({ settings, onRecordUpdated, onRejectB
     };
 
     let currentMins = safeNow.getHours() * 60 + safeNow.getMinutes();
-    const fajrMins = ((prayerTimes?.Fajr || '04:15').split(':').map(Number)[0]) * 60 + ((prayerTimes?.Fajr || '04:15').split(':').map(Number)[1]);
+    const fajrMins = (prayerTimes.Fajr.split(':').map(Number)[0]) * 60 + (prayerTimes.Fajr.split(':').map(Number)[1]);
 
     if (currentMins < fajrMins) {
       currentMins += 1440;
@@ -944,34 +986,50 @@ export default function PrayerTrackerView({ settings, onRecordUpdated, onRejectB
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', alignItems: 'center', textAlign: 'center' }}>
           
-          {/* 1. Reception Row: Clock, Hijri/Gregorian Date & Streak Flame */}
+          {/* 1. Reception Row: Clock, Hijri/Gregorian Date & Streak Flame in a Single Row */}
           <div
             style={{
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              flexWrap: 'wrap',
-              gap: '28px',
+              flexWrap: 'nowrap',
+              whiteSpace: 'nowrap',
+              gap: '24px',
               textAlign: 'center',
               width: '100%',
+              overflowX: 'auto',
+              scrollbarWidth: 'none',
+              msOverflowStyle: 'none',
             }}
           >
             {/* Right Group: Large Clock & Date Stack (Isolated Sub-Component) */}
             <LiveClock timezone={prayerTimes?.timezone} timeFormat={settings?.timeFormat} language={settings?.language} />
 
-            {/* Left Group: Large Flame Streak Icon Stack (Frameless) */}
+            {/* Hairline Divider between Date and Streak */}
             <div
               style={{
-                display: 'flex',
+                width: '1px',
+                height: '36px',
+                backgroundColor: 'var(--border-subtle)',
+                flexShrink: 0,
+              }}
+            />
+
+            {/* Left Group: Flame Streak Stack */}
+            <div
+              style={{
+                display: 'inline-flex',
                 flexDirection: 'column',
                 alignItems: 'center',
                 justifyContent: 'center',
                 gap: '2px',
+                flexShrink: 0,
+                whiteSpace: 'nowrap',
               }}
               title={settings?.language === 'en' ? 'Continuous Daily Prayer Streak' : 'سلسلة الصلوات اليومية المستمرة'}
             >
-              <Flame size={40} style={{ color: '#f97316', filter: 'drop-shadow(0 0 10px rgba(249, 115, 22, 0.5))' }} />
-              <span style={{ fontSize: '1.05rem', fontWeight: '800', color: '#f97316', lineHeight: 1 }}>
+              <Flame size={32} style={{ color: '#f97316', flexShrink: 0 }} />
+              <span style={{ fontSize: '1rem', fontWeight: '800', color: '#f97316', lineHeight: 1, whiteSpace: 'nowrap' }}>
                 {toWesternDigits(computeSummaryStats(getRecords()).maxStreak)} {settings?.language === 'en' ? 'days' : 'يوم'}
               </span>
             </div>
@@ -1012,9 +1070,37 @@ export default function PrayerTrackerView({ settings, onRecordUpdated, onRejectB
             )}
 
             {!hasSyncedTimes && (
-              <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', margin: '6px 0 0 0', textAlign: 'center' }}>
-                {settings?.language === 'en' ? 'Please configure city in settings to sync prayer times.' : 'يرجى المزامنة لجلب مواقيت الصلوات اليومية.'}
-              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px', margin: '8px 0 0 0', textAlign: 'center' }}>
+                <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', margin: 0, textAlign: 'center' }}>
+                  {settings?.language === 'en'
+                    ? 'Please select your city in Settings or auto-detect your location to calculate prayer times.'
+                    : 'يرجى اختيار مدينتك في الإعدادات أو النقر على تحديد الموقع لبدء حساب مواقيت الصلاة بدقة.'}
+                </p>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={handleQuickAutoDetectLocation}
+                    disabled={isDetectingLocationQuick}
+                    id="btn-quick-detect-location"
+                  >
+                    <Navigation size={15} style={{ color: 'var(--status-on-time)' }} />
+                    <span>{isDetectingLocationQuick ? (settings?.language === 'en' ? 'Detecting Location...' : 'جاري تحديد الموقع...') : (settings?.language === 'en' ? 'Auto-Detect My Location' : 'تحديد موقعي الحالي تلقائياً')}</span>
+                  </button>
+
+                  {onNavigateToSettings && (
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      onClick={onNavigateToSettings}
+                      id="btn-quick-open-settings"
+                    >
+                      <Settings size={15} />
+                      <span>{settings?.language === 'en' ? 'Open Settings' : 'فتح الإعدادات'}</span>
+                    </button>
+                  )}
+                </div>
+              </div>
             )}
           </div>
 

@@ -35,11 +35,12 @@ export function getLiveAppContext() {
   };
 
   todayRecords.forEach((r) => {
-    if (r.prayer_id && prayerStatusMap[r.prayer_id] !== undefined) {
-      if (r.status === 'on_time') prayerStatusMap[r.prayer_id] = 'أُديت في وقتها';
-      else if (r.status === 'late') prayerStatusMap[r.prayer_id] = 'أُديت متأخرة';
-      else if (r.status === 'qada') prayerStatusMap[r.prayer_id] = 'أُديت قضاءً';
-      else if (r.status === 'missed') prayerStatusMap[r.prayer_id] = 'فائتة';
+    const pId = r.prayer_name || r.prayer_id;
+    if (pId && prayerStatusMap[pId] !== undefined) {
+      if (r.status === 'on_time') prayerStatusMap[pId] = 'أُديت في وقتها';
+      else if (r.status === 'late') prayerStatusMap[pId] = 'أُديت متأخرة';
+      else if (r.status === 'qada') prayerStatusMap[pId] = 'أُديت قضاءً';
+      else if (r.status === 'missed') prayerStatusMap[pId] = 'فائتة';
     }
   });
 

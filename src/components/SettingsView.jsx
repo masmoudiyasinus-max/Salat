@@ -21,6 +21,11 @@ import {
   Clock,
   Keyboard,
   Info,
+  Navigation,
+  Bell,
+  Download,
+  UploadCloud,
+  FileJson,
 } from 'lucide-react';
 import {
   getSettings,
@@ -30,8 +35,12 @@ import {
   getPrayerTimesCache,
   savePrayerTimesCache,
   toWesternDigits,
+  exportFullUserDataJSON,
+  importFullUserDataJSON,
+  clearEntireAppData,
 } from '../services/storage';
 import { fetchPrayerTimesFromTavily } from '../services/tavilyApi';
+import { requestNotificationsPermission, requestFreshLocationFromScratch } from '../services/permissionService';
 import { getTranslation } from '../services/i18n';
 
 export default function SettingsView({ onSettingsSaved }) {
@@ -42,6 +51,8 @@ export default function SettingsView({ onSettingsSaved }) {
   const [saveSuccessMsg, setSaveSuccessMsg] = useState('');
   const [isDraggingOver, setIsDraggingOver] = useState(false);
   const [isSyncingTimes, setIsSyncingTimes] = useState(false);
+  const [isDetectingLocation, setIsDetectingLocation] = useState(false);
+  const [notifPermission, setNotifPermission] = useState(() => (typeof window !== 'undefined' && 'Notification' in window ? Notification.permission : 'unsupported'));
   const [syncStatus, setSyncStatus] = useState('');
   const [cachedTimes, setCachedTimes] = useState(() => getPrayerTimesCache());
 
@@ -155,6 +166,36 @@ export default function SettingsView({ onSettingsSaved }) {
     }
   };
 
+  const handleEnableNotifications = async () => {
+    const res = await requestNotificationsPermission();
+    setNotifPermission(res);
+    if (res === 'granted') {
+      setSaveSuccessMsg(isEn ? 'Notifications enabled successfully' : 'تم تفعيل تنبيهات الصلاة بنجاح');
+      setTimeout(() => setSaveSuccessMsg(''), 3000);
+    }
+  };
+
+  const handleAutoDetectLocation = async () => {
+    setIsDetectingLocation(true);
+    const res = await requestFreshLocationFromScratch((detected) => {
+      const freshSettings = getSettings();
+      setSettingsState(freshSettings);
+      if (onSettingsSaved) onSettingsSaved(freshSettings);
+      setCachedTimes(getPrayerTimesCache());
+      const locText = detected.city ? `${detected.city}, ${detected.country}` : detected.country;
+      setSaveSuccessMsg(isEn ? `Live location detected: ${locText}` : `تم تحديد الموقع المباشر: ${locText}`);
+      setTimeout(() => setSaveSuccessMsg(''), 4000);
+    });
+    setIsDetectingLocation(false);
+    if (!res.success) {
+      if (res.error === 'denied') {
+        alert(isEn ? 'Location access was denied or disabled in your browser settings. You can enable it in the browser bar or select your city manually below.' : 'تم رفض أو تعطيل إذن الوصول للموقع في المتصفح. يمكنك تفعيله من إعدادات المتصفح أو اختيار المدينة يدوياً من القائمة.');
+      } else {
+        alert(isEn ? 'Could not detect live location. Please select your city manually.' : 'تعذر استقبال إشارة الموقع المباشرة، يرجى اختيار المدينة والدولة يدوياً.');
+      }
+    }
+  };
+
   const processFiles = (files) => {
     if (!files || files.length === 0) return;
     const validFiles = Array.from(files).filter((file) => file.type.startsWith('image/'));
@@ -225,8 +266,8 @@ export default function SettingsView({ onSettingsSaved }) {
 
   // Selected Country Object & Cities
   const countryOptions = Array.isArray(countriesList) ? countriesList.map((c) => c.country) : [];
-  const selectedCountryObj = Array.isArray(countriesList)
-    ? countriesList.find((c) => c.country.toLowerCase() === (settings.country || 'tunisia').toLowerCase())
+  const selectedCountryObj = (Array.isArray(countriesList) && settings.country)
+    ? countriesList.find((c) => c.country.toLowerCase() === settings.country.toLowerCase())
     : null;
   const availableCities = selectedCountryObj?.cities || [];
 
@@ -566,7 +607,7 @@ export default function SettingsView({ onSettingsSaved }) {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
             <SearchableSelect
               label={isEn ? 'Country' : 'الدولة'}
-              value={settings.country || 'Tunisia'}
+              value={settings.country || ''}
               options={countryOptions}
               onChange={handleCountrySelect}
               placeholder={isEn ? 'Select Country...' : 'اختر الدولة...'}
@@ -577,7 +618,7 @@ export default function SettingsView({ onSettingsSaved }) {
 
             <SearchableSelect
               label={isEn ? 'City' : 'المدينة'}
-              value={settings.city || 'Sfax'}
+              value={settings.city || ''}
               options={availableCities}
               onChange={(city) => handleInputChange('city', city)}
               placeholder={isEn ? 'Select City...' : 'اختر المدينة...'}
@@ -585,6 +626,27 @@ export default function SettingsView({ onSettingsSaved }) {
               icon={Building2}
               isEn={isEn}
             />
+
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={handleAutoDetectLocation}
+              disabled={isDetectingLocation}
+              style={{
+                padding: '9px 18px',
+                fontSize: '0.84rem',
+                borderRadius: 'var(--radius-pill)',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px',
+                alignSelf: 'flex-start',
+                cursor: isDetectingLocation ? 'not-allowed' : 'pointer',
+              }}
+              id="btn-auto-detect-location"
+            >
+              <Navigation size={15} style={{ color: 'var(--status-on-time)' }} />
+              <span>{isDetectingLocation ? (isEn ? 'Detecting Location...' : 'جاري تحديد الموقع...') : (isEn ? 'Auto-Detect Current Location' : 'تحديد موقعي الحالي تلقائياً')}</span>
+            </button>
           </div>
         </div>
 
@@ -670,6 +732,54 @@ export default function SettingsView({ onSettingsSaved }) {
                     : 'يقوم التطبيق تلقائياً بالتحقق من مواقيت الصلوات وتحديثها يومياً عند منتصف الليل ومطلع الفجر لضمان الدقة المستمرة.'}
                 </span>
               </div>
+            </div>
+
+            {/* Notification Permission Control */}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '12px 16px',
+                backgroundColor: 'rgba(255, 255, 255, 0.03)',
+                border: '1px solid var(--border-subtle)',
+                borderRadius: 'var(--radius-md)',
+                flexWrap: 'wrap',
+                gap: '10px',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <Bell size={18} style={{ color: 'var(--accent-blue)', flexShrink: 0 }} />
+                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                  <span style={{ fontSize: '0.84rem', fontWeight: '700', color: 'var(--text-primary)' }}>
+                    {isEn ? 'Adhan Browser Notifications' : 'تنبيهات الأذان في المتصفح'}
+                  </span>
+                  <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                    {notifPermission === 'granted'
+                      ? (isEn ? 'Active: Notifications enabled for prayer times' : 'نشط: التنبيهات مفعلة عند حلول أوقات الصلاة')
+                      : (isEn ? 'Disabled: Click to grant permission' : 'معطل: انقر لتفعيل إذن الإشعارات')}
+                  </span>
+                </div>
+              </div>
+              {notifPermission !== 'granted' && (
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={handleEnableNotifications}
+                  style={{
+                    padding: '7px 16px',
+                    fontSize: '0.8rem',
+                    borderRadius: 'var(--radius-pill)',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                  }}
+                  id="btn-enable-notifications"
+                >
+                  <Bell size={14} />
+                  <span>{isEn ? 'Enable Notifications' : 'تفعيل التنبيهات'}</span>
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -834,7 +944,7 @@ export default function SettingsView({ onSettingsSaved }) {
               className="form-input"
               value={settings.prayerSourceUrl || ''}
               onChange={(e) => handleInputChange('prayerSourceUrl', e.target.value)}
-              placeholder="e.g. https://timesprayer.com/prayer-times-in-sfax.html"
+              placeholder={isEn ? 'e.g. https://timesprayer.com/' : 'مثال: https://timesprayer.com/'}
               id="input-prayer-source-url"
             />
             <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '6px', display: 'block' }}>
@@ -1013,33 +1123,124 @@ export default function SettingsView({ onSettingsSaved }) {
             document.body
           )}
 
-        {/* Data Reset Card */}
+        {/* Full Comprehensive Data Backup & Restore Card */}
         <div className="bento-card">
           <h3 style={{ fontSize: '1.15rem', fontWeight: '700', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Trash2 size={20} style={{ color: 'var(--status-qada)' }} />
-            <span>{isEn ? 'Data Management & Reset' : 'مسح البيانات والبدء من جديد'}</span>
+            <FileJson size={20} style={{ color: 'var(--status-on-time)' }} />
+            <span>{isEn ? 'Full Data Backup & Restore' : 'النسخ الاحتياطي الشامل واسترجاع البيانات'}</span>
           </h3>
 
-          <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)', marginBottom: '16px' }}>
-            {isEn ? 'Click here to clear all recorded prayer history and start completely fresh.' : 'انقر هنا لمسح وتصفير كافة سجلات التتبع المحفوظة والبدء بسجلات جديدة 100%.'}
+          <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)', marginBottom: '16px', lineHeight: 1.5 }}>
+            {isEn
+              ? 'Export a complete backup containing 100% of your data (Settings, All Prayer Logs, Sunnahs, and AI Conversations) to a single JSON file, or restore it on any device.'
+              : 'قم بتصدير نسخة احتياطية شاملة تحتوي على 100% من بياناتك (الإعدادات، سجلات الصلوات الخمس والسنن، ومحادثات الشيخ منير) في ملف JSON موحد، أو استرجعها بسهولة على أي جهاز.'}
           </p>
 
-          <button
-            type="button"
-            className="btn-secondary"
-            onClick={() => {
-              if (window.confirm(isEn ? 'Warning: Are you sure you want to clear all prayer records?' : 'تحذير: هل أنت متأكد من مسح وتصفير جميع سجلات الصلوات؟')) {
-                clearAllRecords();
-                setSaveSuccessMsg(isEn ? 'All prayer records cleared successfully' : 'تم مسح وتصفير كافة البيانات بنجاح');
-                setTimeout(() => setSaveSuccessMsg(''), 3000);
-              }
-            }}
-            style={{ fontSize: '0.84rem', padding: '8px 18px', color: 'var(--status-qada)', borderColor: 'rgba(239, 68, 68, 0.4)' }}
-            id="btn-clear-demo-records"
-          >
-            <Trash2 size={15} />
-            <span>{isEn ? 'Clear All Prayer Records' : 'تصفير سجلات الصلوات'}</span>
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '20px' }}>
+            {/* Export Button */}
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => {
+                try {
+                  const jsonStr = exportFullUserDataJSON();
+                  const blob = new Blob([jsonStr], { type: 'application/json' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  const dStr = new Date().toISOString().split('T')[0];
+                  a.href = url;
+                  a.download = `prayer_tracker_backup_${dStr}.json`;
+                  document.body.appendChild(a);
+                  a.click();
+                  document.body.removeChild(a);
+                  URL.revokeObjectURL(url);
+                  setSaveSuccessMsg(isEn ? 'Full backup exported successfully' : 'تم تصدير النسخة الاحتياطية بنجاح');
+                  setTimeout(() => setSaveSuccessMsg(''), 3000);
+                } catch (e) {
+                  alert(isEn ? 'Failed to export backup' : 'تعذر تصدير النسخة الاحتياطية');
+                }
+              }}
+              id="btn-export-full-backup"
+            >
+              <Download size={15} style={{ color: 'var(--status-on-time)' }} />
+              <span>{isEn ? 'Export Full Backup (JSON)' : 'تصدير نسخة احتياطية كاملة (JSON)'}</span>
+            </button>
+
+            {/* Import Button */}
+            <label
+              className="btn-secondary"
+              style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '8px' }}
+              id="btn-import-full-backup-label"
+            >
+              <UploadCloud size={15} style={{ color: 'var(--accent-blue)' }} />
+              <span>{isEn ? 'Restore from Backup (JSON)' : 'استرجاع نسخة احتياطية (JSON)'}</span>
+              <input
+                type="file"
+                accept=".json,application/json"
+                style={{ display: 'none' }}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  const reader = new FileReader();
+                  reader.onload = (event) => {
+                    try {
+                      const content = event.target?.result;
+                      if (typeof content === 'string') {
+                        importFullUserDataJSON(content);
+                        setSettingsState(getSettings());
+                        setSaveSuccessMsg(isEn ? 'Data restored successfully' : 'تم استرجاع كافة البيانات بنجاح وتحديث الواجهة');
+                        setTimeout(() => setSaveSuccessMsg(''), 3500);
+                      }
+                    } catch (err) {
+                      alert(isEn ? `Failed to restore backup: ${err.message}` : `فشل استرجاع النسخة: ${err.message}`);
+                    }
+                  };
+                  reader.readAsText(file);
+                  e.target.value = '';
+                }}
+              />
+            </label>
+          </div>
+
+          <div style={{ width: '100%', height: '1px', backgroundColor: 'var(--border-subtle)', margin: '16px 0' }} />
+
+          {/* Wipe & Reset Options */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => {
+                if (window.confirm(isEn ? 'Warning: Are you sure you want to clear all prayer logs?' : 'تحذير: هل أنت متأكد من مسح وتصفير جميع سجلات الصلوات؟')) {
+                  clearAllRecords();
+                  setSaveSuccessMsg(isEn ? 'All prayer records cleared' : 'تم مسح وتصفير سجلات الصلوات بنجاح');
+                  setTimeout(() => setSaveSuccessMsg(''), 3000);
+                }
+              }}
+              style={{ color: 'var(--status-late)', borderColor: 'rgba(245, 158, 11, 0.3)' }}
+              id="btn-clear-demo-records"
+            >
+              <Trash2 size={14} />
+              <span>{isEn ? 'Clear Prayer Logs Only' : 'تصفير سجلات الصلوات فقط'}</span>
+            </button>
+
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => {
+                if (window.confirm(isEn ? 'DANGER: This will permanently delete ALL settings, prayer logs, and AI conversations! Proceed?' : 'تحذير شديد: سيتم مسح كافة البيانات والإعدادات والمحادثات نهائياً وإعادة ضبط المصنع! هل تريد المتابعة؟')) {
+                  clearEntireAppData();
+                  setSettingsState(getSettings());
+                  setSaveSuccessMsg(isEn ? 'Application reset completely' : 'تمت إعادة ضبط المصنع ومسح كافة البيانات بنجاح');
+                  setTimeout(() => setSaveSuccessMsg(''), 3000);
+                }
+              }}
+              style={{ color: 'var(--status-qada)', borderColor: 'rgba(239, 68, 68, 0.4)' }}
+              id="btn-factory-reset-all"
+            >
+              <Trash2 size={14} />
+              <span>{isEn ? 'Factory Reset (Wipe All Data)' : 'إعادة ضبط المصنع وحذف كافة البيانات'}</span>
+            </button>
+          </div>
         </div>
       </div>
     </div>
