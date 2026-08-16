@@ -8,6 +8,8 @@ export async function fetchPrayerTimesFromTavily(
   targetDateStr = '',
   geminiApiKey = ''
 ) {
+  const settings = typeof window !== 'undefined' ? getSettings() : {};
+  const isEn = settings?.language === 'en';
   let city = manualCity || '';
   let country = manualCountry || '';
   const dateQueryText = targetDateStr ? `tomorrow ${targetDateStr}` : 'today';
@@ -38,11 +40,13 @@ export async function fetchPrayerTimesFromTavily(
         const parseRes = await parseWithAIOrRegex(htmlText);
         if (parseRes && parseRes.times) {
           const domain = cleanUrl.replace(/^https?:\/\//, '').split('/')[0];
-          const tag = parseRes.isAI ? 'صياغة الذكاء الاصطناعي (Gemini AI)' : 'الموقع المصدر';
+          const tag = parseRes.isAI ? (isEn ? 'Gemini AI' : 'صياغة الذكاء الاصطناعي Gemini AI') : (isEn ? 'Source Site' : 'الموقع المصدر');
           return {
             success: true,
             times: parseRes.times,
-            source: targetDateStr ? `مواقيت الغد عبر ${tag} (${domain})` : `${tag} (${domain})`,
+            source: targetDateStr 
+              ? (isEn ? `Tomorrow's times via ${tag} - ${domain}` : `مواقيت الغد عبر ${tag} - ${domain}`)
+              : `${tag} - ${domain}`,
           };
         }
       }
@@ -83,11 +87,15 @@ export async function fetchPrayerTimesFromTavily(
         const content = JSON.stringify(data.results || []);
         const parseRes = await parseWithAIOrRegex(content);
         if (parseRes && parseRes.times) {
-          const tag = parseRes.isAI ? 'بحث وتصحيح الذكاء الاصطناعي (Gemini AI)' : 'البحث العام في الويب (Tavily API)';
+          const tag = parseRes.isAI
+            ? (isEn ? 'Gemini AI Search' : 'بحث وتصحيح الذكاء الاصطناعي Gemini AI')
+            : (isEn ? 'Tavily Web Search' : 'البحث العام في الويب Tavily API');
           return {
             success: true,
             times: parseRes.times,
-            source: targetDateStr ? `مواقيت الغد عبر (${tag})` : `(${tag})`,
+            source: targetDateStr
+              ? (isEn ? `Tomorrow's times via ${tag}` : `مواقيت الغد عبر ${tag}`)
+              : (isEn ? `Live times via ${tag}` : tag),
           };
         }
       }
@@ -96,58 +104,57 @@ export async function fetchPrayerTimesFromTavily(
     }
   }
 
-  // 3. Official Aladhan Structured API with Date Path Endpoint (Guaranteed Fallback)
-  try {
-    let datePath = '';
-    if (targetDateStr) {
-      const parts = targetDateStr.split('-');
-      if (parts.length === 3) {
-        datePath = `/${parts[2]}-${parts[1]}-${parts[0]}`; // /DD-MM-YYYY in URL path!
-      }
-    }
-
-    const fallbackRes = await fetch(
-      `https://api.aladhan.com/v1/timingsByCity${datePath}?city=${encodeURIComponent(city)}&country=${encodeURIComponent(country)}&method=3`
-    );
-    if (fallbackRes.ok) {
-      const json = await fallbackRes.json();
-      const timings = json?.data?.timings;
-      if (timings) {
-        const structuredTimes = {
-          Fajr: cleanTime(timings.Fajr),
-          Sunrise: cleanTime(timings.Sunrise),
-          Dhuhr: cleanTime(timings.Dhuhr),
-          Asr: cleanTime(timings.Asr),
-          Maghrib: cleanTime(timings.Maghrib),
-          Isha: cleanTime(timings.Isha),
-        };
-
-        if (isValidPrayerTimes(structuredTimes)) {
-          return {
-            success: true,
-            times: structuredTimes,
-            timezone: json?.data?.meta?.timezone || '',
-            source: targetDateStr ? `مواقيت الغد الرسمية (${city}, ${country})` : `المواقيت الحية (${city}, ${country})`,
-          };
+  // 3. Fallback Aladhan API (Only if City & Country provided along with keys)
+  if ((apiKey && apiKey.trim() !== '') || (geminiApiKey && geminiApiKey.trim() !== '')) {
+    try {
+      let datePath = '';
+      if (targetDateStr) {
+        const parts = targetDateStr.split('-');
+        if (parts.length === 3) {
+          datePath = `/${parts[2]}-${parts[1]}-${parts[0]}`;
         }
       }
+
+      if (city && country) {
+        const fallbackRes = await fetch(
+          `https://api.aladhan.com/v1/timingsByCity${datePath}?city=${encodeURIComponent(city)}&country=${encodeURIComponent(country)}&method=3`
+        );
+        if (fallbackRes.ok) {
+          const json = await fallbackRes.json();
+          const timings = json?.data?.timings;
+          if (timings) {
+            const structuredTimes = {
+              Fajr: cleanTime(timings.Fajr),
+              Sunrise: cleanTime(timings.Sunrise),
+              Dhuhr: cleanTime(timings.Dhuhr),
+              Asr: cleanTime(timings.Asr),
+              Maghrib: cleanTime(timings.Maghrib),
+              Isha: cleanTime(timings.Isha),
+            };
+
+            if (isValidPrayerTimes(structuredTimes)) {
+              return {
+                success: true,
+                times: structuredTimes,
+                timezone: json?.data?.meta?.timezone || '',
+                source: targetDateStr
+                  ? (isEn ? `Tomorrow's Official Times - ${city}, ${country}` : `مواقيت الغد الرسمية - ${city}، ${country}`)
+                  : (isEn ? `Live Times - ${city}, ${country}` : `المواقيت الحية - ${city}، ${country}`),
+              };
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('Aladhan API error:', err);
     }
-  } catch (err) {
-    console.warn('Aladhan API error:', err);
   }
 
-  // Default fallback times
+  // If no keys provided or search failed, return empty times (Unknown)
   return {
-    success: true,
-    times: {
-      Fajr: '04:15',
-      Sunrise: '05:45',
-      Dhuhr: '12:30',
-      Asr: '16:00',
-      Maghrib: '19:30',
-      Isha: '21:00',
-    },
-    source: 'الذاكرة الافتراضية',
+    success: false,
+    times: null,
+    source: isEn ? 'Times Unavailable' : 'أوقات غير معروفة',
   };
 }
 

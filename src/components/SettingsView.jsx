@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
+import ReactDOM from 'react-dom';
 import {
   Key,
   Globe,
   CheckCircle,
   Eye,
   EyeOff,
-  ShieldCheck,
   MapPin,
   RefreshCw,
   Search,
@@ -14,28 +14,42 @@ import {
   Building2,
   Image as ImageIcon,
   XCircle,
-  Download,
   Upload,
-  Plus,
   Trash2,
   Video,
   AlertCircle,
+  Clock,
+  Keyboard,
+  Info,
 } from 'lucide-react';
 import {
   getSettings,
   saveSettings,
   getCityNowDate,
   clearAllRecords,
+  getPrayerTimesCache,
+  savePrayerTimesCache,
+  toWesternDigits,
 } from '../services/storage';
+import { fetchPrayerTimesFromTavily } from '../services/tavilyApi';
+import { getTranslation } from '../services/i18n';
 
 export default function SettingsView({ onSettingsSaved }) {
   const [settings, setSettingsState] = useState(getSettings);
   const [showGeminiKey, setShowGeminiKey] = useState(false);
   const [showTavilyKey, setShowTavilyKey] = useState(false);
+  const [showShortcutsModal, setShowShortcutsModal] = useState(false);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState('');
   const [isDraggingOver, setIsDraggingOver] = useState(false);
+  const [isSyncingTimes, setIsSyncingTimes] = useState(false);
+  const [syncStatus, setSyncStatus] = useState('');
+  const [cachedTimes, setCachedTimes] = useState(() => getPrayerTimesCache());
 
-  // Dynamic Countries and Cities API State (Zero Manual Entry)
+  const lang = settings.language || 'ar';
+  const isEn = lang === 'en';
+  const t = (k, fb) => getTranslation(lang, k, fb);
+
+  // Dynamic Countries and Cities API State
   const [countriesList, setCountriesList] = useState([]);
   const [isLoadingCountries, setIsLoadingCountries] = useState(true);
 
@@ -72,8 +86,73 @@ export default function SettingsView({ onSettingsSaved }) {
       if (onSettingsSaved) onSettingsSaved(updated);
       return updated;
     });
-    setSaveSuccessMsg('تم الحفظ الفوري تلقائياً ✓');
+    setSaveSuccessMsg(isEn ? 'Saved automatically' : 'تم الحفظ الفوري تلقائياً');
     setTimeout(() => setSaveSuccessMsg(''), 2500);
+  };
+
+  const handleCountrySelect = (selectedCountry) => {
+    const countryObj = Array.isArray(countriesList)
+      ? countriesList.find((c) => c.country.toLowerCase() === selectedCountry.toLowerCase())
+      : null;
+    const firstCity = countryObj && countryObj.cities.length > 0 ? countryObj.cities[0] : '';
+    setSettingsState((prev) => {
+      const updated = {
+        ...prev,
+        country: selectedCountry,
+        city: firstCity,
+      };
+      saveSettings(updated);
+      if (onSettingsSaved) onSettingsSaved(updated);
+      return updated;
+    });
+    setSaveSuccessMsg(isEn ? 'Location updated and prayer times synced' : 'تم تحديث الموقع وحفظ التوقيت فورياً');
+    setTimeout(() => setSaveSuccessMsg(''), 3000);
+  };
+
+  const handleManualSyncPrayerTimes = async () => {
+    if (isSyncingTimes) return;
+    setIsSyncingTimes(true);
+    setSyncStatus(isEn ? 'Syncing prayer times...' : 'جاري مزامنة المواقيت...');
+
+    const today = new Date();
+    const targetDateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+
+    try {
+      const res = await fetchPrayerTimesFromTavily(
+        settings.tavilyApiKey,
+        settings.prayerSourceUrl,
+        settings.city,
+        settings.country,
+        targetDateStr,
+        settings.geminiApiKey
+      );
+
+      if (res && res.success && res.times) {
+        const hh = String(today.getHours()).padStart(2, '0');
+        const mm = String(today.getMinutes()).padStart(2, '0');
+        const timeNow = toWesternDigits(`${hh}:${mm}`);
+
+        const mergedTimes = {
+          ...res.times,
+          timezone: res.timezone || cachedTimes?.timezone || '',
+          lastSyncedDate: targetDateStr,
+          lastSyncedTime: timeNow,
+          source: res.source || (isEn ? 'Official Prayer Times' : 'المواقيت الرسمية'),
+        };
+
+        savePrayerTimesCache(mergedTimes);
+        setCachedTimes(mergedTimes);
+        setSyncStatus(isEn ? `Synced successfully at ${timeNow}` : `تمت المزامنة بنجاح في ${timeNow}`);
+        setSaveSuccessMsg(isEn ? 'Prayer times synced and saved' : 'تم تحديث ومزامنة مواقيت الصلاة وحفظها بنجاح');
+        setTimeout(() => setSaveSuccessMsg(''), 3000);
+      } else {
+        setSyncStatus(isEn ? 'Sync failed. Please check city or API keys.' : 'تعذر التحديث، يرجى التحقق من مفاتيح API واسم المدينة.');
+      }
+    } catch (e) {
+      setSyncStatus(isEn ? 'Connection error during sync.' : 'حدث خطأ أثناء الاتصال بمزود المواقيت.');
+    } finally {
+      setIsSyncingTimes(false);
+    }
   };
 
   const processFiles = (files) => {
@@ -144,42 +223,16 @@ export default function SettingsView({ onSettingsSaved }) {
     handleInputChange('activeCustomBgImage', imgUrl);
   };
 
-  const handleCountrySelect = (selectedCountry) => {
-    const countryObj = Array.isArray(countriesList) ? countriesList.find(
-      (c) => c.country.toLowerCase() === selectedCountry.toLowerCase()
-    ) : null;
-    const firstCity = countryObj && countryObj.cities.length > 0 ? countryObj.cities[0] : '';
-    setSettingsState((prev) => {
-      const updated = {
-        ...prev,
-        country: selectedCountry,
-        city: firstCity,
-      };
-      saveSettings(updated);
-      if (onSettingsSaved) onSettingsSaved(updated);
-      return updated;
-    });
-    setSaveSuccessMsg('تم تحديث الموقع وحفظ التوقيت فورياً ✓');
-    setTimeout(() => setSaveSuccessMsg(''), 3000);
-  };
-
   // Selected Country Object & Cities
   const countryOptions = Array.isArray(countriesList) ? countriesList.map((c) => c.country) : [];
-  const selectedCountryObj = Array.isArray(countriesList) ? countriesList.find(
-    (c) => c.country.toLowerCase() === (settings.country || 'tunisia').toLowerCase()
-  ) : null;
+  const selectedCountryObj = Array.isArray(countriesList)
+    ? countriesList.find((c) => c.country.toLowerCase() === (settings.country || 'tunisia').toLowerCase())
+    : null;
   const availableCities = selectedCountryObj?.cities || [];
 
   return (
     <div className="settings-view">
-      <div className="section-header">
-        <div>
-          <h2 className="section-title">إعدادات التطبيق وتدفق البيانات</h2>
-          <p className="section-subtitle">
-            إدارة مفاتيح API الخاصة بالذكاء الاصطناعي وتحديد الموقع الجغرافي.
-          </p>
-        </div>
-
+      <div style={{ display: 'flex', justifyContent: 'flex-start', alignItems: 'center', marginBottom: '16px' }}>
         <div
           style={{
             display: 'flex',
@@ -195,66 +248,22 @@ export default function SettingsView({ onSettingsSaved }) {
           }}
         >
           <CheckCircle size={16} />
-          <span>{saveSuccessMsg || 'حفظ تلقائي فوري مفعّل'}</span>
+          <span>{saveSuccessMsg || (isEn ? 'Auto-save active' : 'حفظ تلقائي فوري مفعّل')}</span>
         </div>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '24px' }}>
-        {/* Automated API Country & City Searchable Selection Card */}
-        <div className="bento-card" style={{ gridColumn: '1 / -1' }}>
-          <h3 style={{ fontSize: '1.15rem', fontWeight: '700', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <MapPin size={20} style={{ color: 'var(--status-on-time)' }} />
-            <span>نظام القوائم التفاعلية الفاخرة للبلدان والمدن (حفظ تلقائي فوري)</span>
-          </h3>
-
-          <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)', marginBottom: '20px' }}>
-            اختر دولتك ومدينتك عبر القوائم التفاعلية لترحيل وتحديث المواقيت والساعة فورياً دون الحاجة للضغط على أي زر.
-          </p>
-
-          {isLoadingCountries ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-secondary)', fontSize: '0.9rem', padding: '16px 0' }}>
-              <RefreshCw size={16} className="spin" />
-              <span>جاري تحميل قائمة كافة دول ومدن العالم تلقائياً...</span>
-            </div>
-          ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '20px' }}>
-              {/* Country Custom Searchable Select */}
-              <SearchableSelect
-                label="اختر الدولة (Country)"
-                value={settings.country || 'Tunisia'}
-                options={countryOptions.length > 0 ? countryOptions : ['Tunisia', 'Saudi Arabia', 'Egypt', 'Algeria', 'Morocco']}
-                onChange={handleCountrySelect}
-                placeholder="اختر الدولة..."
-                searchPlaceholder="ابحث عن اسم الدولة..."
-                icon={Globe}
-              />
-
-              {/* City Custom Searchable Select */}
-              <SearchableSelect
-                label="اختر المدينة (City)"
-                value={settings.city || (availableCities[0] || 'Sfax')}
-                options={availableCities.length > 0 ? availableCities : [settings.city || 'Sfax']}
-                onChange={(selectedCity) => handleInputChange('city', selectedCity)}
-                placeholder="اختر المدينة..."
-                searchPlaceholder="ابحث عن اسم المدينة..."
-                icon={Building2}
-              />
-            </div>
-          )}
-        </div>
-
-        {/* Unified Background Mode Selector Card (Full Width) */}
+        {/* Unified Background Mode Selector Card */}
         <div className="bento-card" style={{ gridColumn: '1 / -1' }}>
           <h3 style={{ fontSize: '1.15rem', fontWeight: '700', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
             <Video size={20} style={{ color: 'var(--status-on-time)' }} />
-            <span>تخصيص نمط ونوع خلفية الموقع الحية</span>
+            <span>{isEn ? 'Live Scene Background' : 'تخصيص نمط ونوع خلفية الموقع الحية'}</span>
           </h3>
 
           <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)', marginBottom: '18px' }}>
-            اختر نوع ونمط الخلفية التي ترغب بعرضها خلف البطاقات الزجاجية (بث حي من الحرم المكي أو المدينة النبوية أو رفع صور مخصصة):
+            {isEn ? 'Choose live stream or upload custom wallpapers behind frosted cards:' : 'اختر نوع ونمط الخلفية التي ترغب بعرضها خلف البطاقات الزجاجية:'}
           </p>
 
-          {/* 3 Main Background Options Small Pill Buttons */}
           <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '16px' }}>
             <button
               type="button"
@@ -275,7 +284,7 @@ export default function SettingsView({ onSettingsSaved }) {
               }}
             >
               <Video size={15} />
-              <span>بث مباشر للحرم المكي (افتراضي)</span>
+              <span>{isEn ? 'Makkah Live Stream' : 'بث مباشر للحرم المكي'}</span>
             </button>
 
             <button
@@ -297,7 +306,7 @@ export default function SettingsView({ onSettingsSaved }) {
               }}
             >
               <Video size={15} />
-              <span>بث مباشر للمدينة النبوية</span>
+              <span>{isEn ? 'Madinah Live Stream' : 'بث مباشر للمدينة النبوية'}</span>
             </button>
 
             <button
@@ -324,21 +333,21 @@ export default function SettingsView({ onSettingsSaved }) {
               }}
             >
               <ImageIcon size={15} />
-              <span>صورة مخصصة من حاسوبك</span>
+              <span>{isEn ? 'Custom Images from Device' : 'صورة مخصصة من حاسوبك'}</span>
             </button>
           </div>
 
           {(settings.bgMode || 'makkah') === 'makkah' && (
             <div style={{ backgroundColor: 'var(--bg-primary)', padding: '14px 18px', borderRadius: 'var(--radius-md)', border: '1px solid rgba(16, 185, 129, 0.3)', fontSize: '0.85rem', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '10px' }}>
               <CheckCircle size={18} style={{ color: 'var(--status-on-time)', flexShrink: 0 }} />
-              <span>البث المباشر المكرّم للحرم المكي الشريف يعمل الآن كفيديو أساسي افتراضي في خلفية الموقع.</span>
+              <span>{isEn ? 'Holy Makkah Live Stream is now active as primary background.' : 'البث المباشر المكرّم للحرم المكي الشريف يعمل الآن كفيديو أساسي افتراضي في خلفية الموقع.'}</span>
             </div>
           )}
 
           {settings.bgMode === 'madinah' && (
             <div style={{ backgroundColor: 'var(--bg-primary)', padding: '14px 18px', borderRadius: 'var(--radius-md)', border: '1px solid rgba(16, 185, 129, 0.3)', fontSize: '0.85rem', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '10px' }}>
               <CheckCircle size={18} style={{ color: 'var(--status-on-time)', flexShrink: 0 }} />
-              <span>البث المباشر المكرّم للمدينة النبوية والمسجد النبوي الشريف يعمل الآن كفيديو حي في خلفية الموقع.</span>
+              <span>{isEn ? 'Holy Madinah Live Stream is now active as primary background.' : 'البث المباشر المكرّم للمدينة النبوية والمسجد النبوي الشريف يعمل الآن كفيديو حي في خلفية الموقع.'}</span>
             </div>
           )}
 
@@ -347,7 +356,7 @@ export default function SettingsView({ onSettingsSaved }) {
               {(!settings.customBgImages || settings.customBgImages.length === 0 || !settings.activeCustomBgImage) && (
                 <div style={{ backgroundColor: 'rgba(245, 158, 11, 0.12)', padding: '12px 16px', borderRadius: 'var(--radius-md)', border: '1px solid rgba(245, 158, 11, 0.3)', color: 'var(--status-late)', fontSize: '0.85rem', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <AlertCircle size={16} style={{ flexShrink: 0 }} />
-                  <span>تنبيه: لم تدرج أو تحدد صورة بعد. تظل الخلفية السابقة كما هي حتى تقوم برفع أو اختيار صورة فتتحول إليها بسلاسة (Fade).</span>
+                  <span>{isEn ? 'Please upload or select an image to activate custom background.' : 'تنبيه: لم تدرج أو تحدد صورة بعد. تظل الخلفية السابقة كما هي حتى تقوم برفع أو اختيار صورة.'}</span>
                 </div>
               )}
               <div style={{ marginBottom: '20px' }}>
@@ -373,7 +382,7 @@ export default function SettingsView({ onSettingsSaved }) {
                     cursor: 'pointer',
                     textAlign: 'center',
                     transition: 'all 0.2s ease',
-                    boxShadow: isDraggingOver ? '0 0 20px rgba(16, 185, 129, 0.3)' : 'none',
+                    boxShadow: isDraggingOver ? '0 4px 12px rgba(0, 0, 0, 0.25)' : 'none',
                   }}
                 >
                   <Upload
@@ -386,10 +395,10 @@ export default function SettingsView({ onSettingsSaved }) {
                     }}
                   />
                   <span style={{ fontSize: '0.98rem', fontWeight: '700', color: 'var(--text-primary)', marginBottom: '4px' }}>
-                    {isDraggingOver ? 'أسقط ملفات الصور هنا فورياً' : 'قم بسحب وإسقاط ملفات الصور هنا'}
+                    {isDraggingOver ? (isEn ? 'Drop images here' : 'أسقط ملفات الصور هنا فورياً') : (isEn ? 'Drag & drop image files here' : 'قم بسحب وإسقاط ملفات الصور هنا')}
                   </span>
                   <span style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
-                    أو انقر هنا لاستعراض واختيار الصور من جهازك (JPG, PNG, WEBP)
+                    {isEn ? 'Or click here to browse images from your device' : 'أو انقر هنا لاستعراض واختيار الصور من جهازك'}
                   </span>
                   <input
                     type="file"
@@ -404,7 +413,7 @@ export default function SettingsView({ onSettingsSaved }) {
               {Array.isArray(settings.customBgImages) && settings.customBgImages.length > 0 && (
                 <div>
                   <div style={{ fontSize: '0.88rem', fontWeight: '700', color: 'var(--text-primary)', marginBottom: '12px' }}>
-                    الصور المضافة (انقر على أي صورة لتحديدها كخلفية نشطة):
+                    {isEn ? 'Uploaded Wallpapers:' : 'الصور المضافة:'}
                   </div>
                   <div
                     style={{
@@ -426,16 +435,15 @@ export default function SettingsView({ onSettingsSaved }) {
                             height: '90px',
                             border: isActive ? '2px solid var(--status-on-time)' : '1px solid var(--border-subtle)',
                             cursor: 'pointer',
-                            boxShadow: isActive ? '0 0 16px rgba(16, 185, 129, 0.4)' : 'none',
+                            boxShadow: isActive ? '0 4px 12px rgba(0, 0, 0, 0.25)' : 'none',
                             transition: 'all 0.2s ease',
                           }}
                         >
                           <img
                             src={imgUrl}
-                            alt={`خلفية ${index + 1}`}
+                            alt={`bg ${index + 1}`}
                             style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                           />
-                          
                           {isActive && (
                             <div
                               style={{
@@ -472,7 +480,7 @@ export default function SettingsView({ onSettingsSaved }) {
                               display: 'flex',
                               alignItems: 'center',
                             }}
-                            title="حذف هذه الصورة"
+                            title={isEn ? 'Delete image' : 'حذف هذه الصورة'}
                           >
                             <Trash2 size={12} />
                           </button>
@@ -486,16 +494,258 @@ export default function SettingsView({ onSettingsSaved }) {
           )}
         </div>
 
+        {/* Interface Language Card */}
+        <div className="bento-card">
+          <h3 style={{ fontSize: '1.15rem', fontWeight: '700', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Globe size={20} style={{ color: 'var(--status-on-time)' }} />
+            <span>{isEn ? 'Interface Language' : 'لغة الواجهة'}</span>
+            <span title={isEn ? 'Choose application interface language' : 'اختيار لغة العرض المناسبة للتطبيق'} style={{ display: 'inline-flex', alignItems: 'center', color: 'var(--text-muted)', cursor: 'help' }}>
+              <Info size={15} />
+            </span>
+          </h3>
+
+          <div style={{ display: 'flex', gap: '14px', flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              onClick={() => handleInputChange('language', 'ar')}
+              style={{
+                padding: '12px 22px',
+                borderRadius: 'var(--radius-pill)',
+                border: (settings.language || 'ar') === 'ar' ? '1.5px solid var(--status-on-time)' : '1px solid var(--border-subtle)',
+                backgroundColor: (settings.language || 'ar') === 'ar' ? 'rgba(16, 185, 129, 0.18)' : 'rgba(255, 255, 255, 0.05)',
+                color: (settings.language || 'ar') === 'ar' ? '#ffffff' : 'var(--text-secondary)',
+                fontSize: '0.92rem',
+                fontWeight: '700',
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px',
+                transition: 'all 0.2s ease',
+              }}
+              id="btn-lang-ar"
+            >
+              {(settings.language || 'ar') === 'ar' && <Check size={16} style={{ color: 'var(--status-on-time)' }} />}
+              <span>العربية</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleInputChange('language', 'en')}
+              style={{
+                padding: '12px 22px',
+                borderRadius: 'var(--radius-pill)',
+                border: settings.language === 'en' ? '1.5px solid var(--status-on-time)' : '1px solid var(--border-subtle)',
+                backgroundColor: settings.language === 'en' ? 'rgba(16, 185, 129, 0.18)' : 'rgba(255, 255, 255, 0.05)',
+                color: settings.language === 'en' ? '#ffffff' : 'var(--text-secondary)',
+                fontSize: '0.92rem',
+                fontWeight: '700',
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px',
+                transition: 'all 0.2s ease',
+              }}
+              id="btn-lang-en"
+            >
+              {settings.language === 'en' && <Check size={16} style={{ color: 'var(--status-on-time)' }} />}
+              <span>English</span>
+            </button>
+          </div>
+        </div>
+
+        {/* City and Country Card */}
+        <div className="bento-card">
+          <h3 style={{ fontSize: '1.15rem', fontWeight: '700', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <MapPin size={20} style={{ color: 'var(--status-on-time)' }} />
+            <span>{isEn ? 'City & Country' : 'المدينة والدولة'}</span>
+            <span title={isEn ? 'Set your location for accurate automated prayer timings' : 'تحديد موقعك تلقائياً لضبط مواقيت الصلاة بدقة'} style={{ display: 'inline-flex', alignItems: 'center', color: 'var(--text-muted)', cursor: 'help' }}>
+              <Info size={15} />
+            </span>
+          </h3>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            <SearchableSelect
+              label={isEn ? 'Country' : 'الدولة'}
+              value={settings.country || 'Tunisia'}
+              options={countryOptions}
+              onChange={handleCountrySelect}
+              placeholder={isEn ? 'Select Country...' : 'اختر الدولة...'}
+              searchPlaceholder={isEn ? 'Search Country...' : 'ابحث عن الدولة...'}
+              icon={Globe}
+              isEn={isEn}
+            />
+
+            <SearchableSelect
+              label={isEn ? 'City' : 'المدينة'}
+              value={settings.city || 'Sfax'}
+              options={availableCities}
+              onChange={(city) => handleInputChange('city', city)}
+              placeholder={isEn ? 'Select City...' : 'اختر المدينة...'}
+              searchPlaceholder={isEn ? 'Search City...' : 'ابحث عن المدينة...'}
+              icon={Building2}
+              isEn={isEn}
+            />
+          </div>
+        </div>
+
+        {/* Prayer Times Sync & Daily Auto-Update Card */}
+        <div className="bento-card">
+          <h3 style={{ fontSize: '1.15rem', fontWeight: '700', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <RefreshCw size={20} style={{ color: 'var(--status-on-time)' }} />
+            <span>{isEn ? 'Prayer Times Sync & Daily Auto-Update' : 'تحديث مواقيت الصلاة والمزامنة اليومية'}</span>
+            <span title={isEn ? 'Manage manual synchronization and daily automated background updates' : 'إدارة المزامنة اليدوية والتحديث التلقائي اليومي في الخلفية'} style={{ display: 'inline-flex', alignItems: 'center', color: 'var(--text-muted)', cursor: 'help' }}>
+              <Info size={15} />
+            </span>
+          </h3>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            {/* Sync Status Banner */}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '14px 18px',
+                backgroundColor: 'rgba(255, 255, 255, 0.04)',
+                border: '1px solid var(--border-subtle)',
+                borderRadius: 'var(--radius-md)',
+                flexWrap: 'wrap',
+                gap: '12px',
+              }}
+            >
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <span style={{ fontSize: '0.86rem', fontWeight: '700', color: 'var(--text-primary)' }}>
+                  {isEn ? 'Current Sync Status' : 'حالة المزامنة الحالية'}
+                </span>
+                <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                  {syncStatus || (cachedTimes?.lastSyncedTime ? (isEn ? `Last updated: ${cachedTimes.lastSyncedTime}` : `آخر تحديث مسجل: ${cachedTimes.lastSyncedTime}`) : (isEn ? 'Ready to sync' : 'جاهز للمزامنة الفورية'))}
+                  {cachedTimes?.source ? ` • ${cachedTimes.source}` : ''}
+                </span>
+              </div>
+
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={handleManualSyncPrayerTimes}
+                disabled={isSyncingTimes}
+                style={{
+                  padding: '10px 22px',
+                  borderRadius: 'var(--radius-pill)',
+                  fontSize: '0.86rem',
+                  fontWeight: '700',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  cursor: isSyncingTimes ? 'not-allowed' : 'pointer',
+                  opacity: isSyncingTimes ? 0.7 : 1,
+                  boxShadow: '0 4px 12px rgba(0, 0, 0, 0.25)',
+                }}
+                id="btn-manual-sync-prayer-times"
+              >
+                <RefreshCw size={15} className={isSyncingTimes ? 'spin-icon' : ''} style={{ animation: isSyncingTimes ? 'spin 1s linear infinite' : 'none' }} />
+                <span>{isSyncingTimes ? (isEn ? 'Syncing...' : 'جاري التحديث...') : (isEn ? 'Sync Prayer Times Now' : 'تحديث ومزامنة المواقيت الآن')}</span>
+              </button>
+            </div>
+
+            {/* Daily Auto-Sync Rule Info */}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+                padding: '12px 16px',
+                backgroundColor: 'rgba(16, 185, 129, 0.08)',
+                border: '1px solid rgba(16, 185, 129, 0.22)',
+                borderRadius: 'var(--radius-md)',
+              }}
+            >
+              <CheckCircle size={18} style={{ color: 'var(--status-on-time)', flexShrink: 0 }} />
+              <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                <span style={{ fontWeight: '700', color: 'var(--text-primary)', marginInlineEnd: '6px' }}>
+                  {isEn ? 'Daily Automatic Sync Active:' : 'المزامنة التلقائية اليومية نشطة:'}
+                </span>
+                <span>
+                  {isEn
+                    ? 'The app automatically verifies and refreshes prayer calculations every 24 hours at midnight and dawn.'
+                    : 'يقوم التطبيق تلقائياً بالتحقق من مواقيت الصلوات وتحديثها يومياً عند منتصف الليل ومطلع الفجر لضمان الدقة المستمرة.'}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Time Format Settings Card */}
+        <div className="bento-card">
+          <h3 style={{ fontSize: '1.15rem', fontWeight: '700', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Clock size={20} style={{ color: 'var(--accent-blue)' }} />
+            <span>{isEn ? 'Time Display Format' : 'نظام عرض الوقت'}</span>
+            <span title={isEn ? 'Switch between 12-hour and 24-hour time format' : 'التبديل بين تنسيق 12 ساعة وتنسيق 24 ساعة'} style={{ display: 'inline-flex', alignItems: 'center', color: 'var(--text-muted)', cursor: 'help' }}>
+              <Info size={15} />
+            </span>
+          </h3>
+
+          <div style={{ display: 'flex', gap: '14px', flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              onClick={() => handleInputChange('timeFormat', '12')}
+              style={{
+                padding: '12px 22px',
+                borderRadius: 'var(--radius-pill)',
+                border: (settings.timeFormat || '12') === '12' ? '1.5px solid var(--accent-blue)' : '1px solid var(--border-subtle)',
+                backgroundColor: (settings.timeFormat || '12') === '12' ? 'rgba(59, 130, 246, 0.18)' : 'rgba(255, 255, 255, 0.05)',
+                color: (settings.timeFormat || '12') === '12' ? '#ffffff' : 'var(--text-secondary)',
+                fontSize: '0.92rem',
+                fontWeight: '700',
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px',
+                transition: 'all 0.2s ease',
+              }}
+            >
+              {(settings.timeFormat || '12') === '12' && <Check size={16} style={{ color: 'var(--accent-blue)' }} />}
+              <span>{isEn ? '12-Hour Format' : 'نظام 12 ساعة'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleInputChange('timeFormat', '24')}
+              style={{
+                padding: '12px 22px',
+                borderRadius: 'var(--radius-pill)',
+                border: settings.timeFormat === '24' ? '1.5px solid var(--accent-blue)' : '1px solid var(--border-subtle)',
+                backgroundColor: settings.timeFormat === '24' ? 'rgba(59, 130, 246, 0.18)' : 'rgba(255, 255, 255, 0.05)',
+                color: settings.timeFormat === '24' ? '#ffffff' : 'var(--text-secondary)',
+                fontSize: '0.92rem',
+                fontWeight: '700',
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px',
+                transition: 'all 0.2s ease',
+              }}
+            >
+              {settings.timeFormat === '24' && <Check size={16} style={{ color: 'var(--accent-blue)' }} />}
+              <span>{isEn ? '24-Hour Format' : 'نظام 24 ساعة'}</span>
+            </button>
+          </div>
+        </div>
+
         {/* API Keys Card */}
         <div className="bento-card">
           <h3 style={{ fontSize: '1.15rem', fontWeight: '700', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
             <Key size={20} style={{ color: 'var(--status-on-time)' }} />
-            <span>مفاتيح API الذكية (Gemini & Tavily Search)</span>
+            <span>{isEn ? 'Smart API Keys' : 'مفاتيح API الذكية'}</span>
           </h3>
 
           {/* Gemini API Key */}
           <div className="form-group" style={{ marginBottom: '16px' }}>
-            <label className="form-label">مفتاح Gemini API (للدردشة الذكية والذكاء الاصطناعي):</label>
+            <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span>{isEn ? 'Gemini API Key' : 'مفتاح Gemini API'}</span>
+              <span title={isEn ? 'Used for Sheikh Muneer AI smart chat companion' : 'مخصص لتشغيل الدردشة الذكية وتحليل الروتين اليومي'} style={{ display: 'inline-flex', alignItems: 'center', color: 'var(--text-muted)', cursor: 'help' }}>
+                <Info size={14} />
+              </span>
+            </label>
             <div style={{ position: 'relative' }}>
               <input
                 type={showGeminiKey ? 'text' : 'password'}
@@ -509,7 +759,7 @@ export default function SettingsView({ onSettingsSaved }) {
                 type="button"
                 style={{
                   position: 'absolute',
-                  left: '12px',
+                  [isEn ? 'right' : 'left']: '12px',
                   top: '50%',
                   transform: 'translateY(-50%)',
                   background: 'none',
@@ -523,13 +773,18 @@ export default function SettingsView({ onSettingsSaved }) {
               </button>
             </div>
             <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px', display: 'block' }}>
-              يُحفظ المفتاح محليًا في المتصفح فقط ولن يُرسل لأي خادم خارجي سوى Google Gemini.
+              {isEn ? 'Your key is stored locally in your browser and only sent directly to Google Gemini.' : 'يُحفظ المفتاح محليًا في المتصفح فقط ولن يُرسل لأي خادم خارجي سوى Google Gemini.'}
             </span>
           </div>
 
           {/* Tavily Search API Key */}
           <div className="form-group" style={{ marginBottom: 0 }}>
-            <label className="form-label">مفتاح Tavily API (للبحث الذكي المباشر وتحديث مواقيت الصلاة):</label>
+            <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span>{isEn ? 'Tavily API Key' : 'مفتاح Tavily API'}</span>
+              <span title={isEn ? 'Used for automated real-time web search for prayer times' : 'مخصص للبحث الذكي المباشر وتحديث مواقيت الصلاة لمدينتك بدقة فائقة'} style={{ display: 'inline-flex', alignItems: 'center', color: 'var(--text-muted)', cursor: 'help' }}>
+                <Info size={14} />
+              </span>
+            </label>
             <div style={{ position: 'relative' }}>
               <input
                 type={showTavilyKey ? 'text' : 'password'}
@@ -543,7 +798,7 @@ export default function SettingsView({ onSettingsSaved }) {
                 type="button"
                 style={{
                   position: 'absolute',
-                  left: '12px',
+                  [isEn ? 'right' : 'left']: '12px',
                   top: '50%',
                   transform: 'translateY(-50%)',
                   background: 'none',
@@ -557,7 +812,7 @@ export default function SettingsView({ onSettingsSaved }) {
               </button>
             </div>
             <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px', display: 'block' }}>
-              مفتاح خادم Tavily للبحث المباشر في الويب وجلب أحدث مواقيت الصلاة لمدينتك تلقائياً وبدقة فائقة.
+              {isEn ? 'Tavily key to fetch accurate live prayer times for your city automatically.' : 'مفتاح خادم Tavily للبحث المباشر في الويب وجلب أحدث مواقيت الصلاة لمدينتك تلقائياً وبدقة فائقة.'}
             </span>
           </div>
         </div>
@@ -566,49 +821,224 @@ export default function SettingsView({ onSettingsSaved }) {
         <div className="bento-card">
           <h3 style={{ fontSize: '1.15rem', fontWeight: '700', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
             <Globe size={20} />
-            <span>رابط موقع مواقيت الصلاة المصدر (إدخال يدوي اختياري)</span>
+            <span>{isEn ? 'Custom Prayer Times Source URL' : 'رابط موقع مواقيت الصلاة المصدر'}</span>
+            <span title={isEn ? 'Optional custom prayer website link' : 'إدخال يدوي اختياري - يُترك فارغاً افتراضياً'} style={{ display: 'inline-flex', alignItems: 'center', color: 'var(--text-muted)', cursor: 'help' }}>
+              <Info size={15} />
+            </span>
           </h3>
 
           <div className="form-group" style={{ marginBottom: 0 }}>
-            <label className="form-label">رابط الصفحة المصدر (يُترك فارغاً افتراضياً):</label>
+            <label className="form-label">{isEn ? 'Source Page URL:' : 'رابط الصفحة المصدر:'}</label>
             <input
               type="text"
               className="form-input"
               value={settings.prayerSourceUrl || ''}
               onChange={(e) => handleInputChange('prayerSourceUrl', e.target.value)}
-              placeholder="مثال: https://timesprayer.com/prayer-times-in-sfax.html (اختياري)"
+              placeholder="e.g. https://timesprayer.com/prayer-times-in-sfax.html"
               id="input-prayer-source-url"
             />
             <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '6px', display: 'block' }}>
-              اختياري. إذا تُرِك فارغاً، يتم جلب مواقيت الصلاة عبر البحث العام في الويب أو الخدمة الرسمية مباشرة.
+              {isEn ? 'Optional. If left blank, prayer times are fetched automatically via web search or official source.' : 'اختياري. إذا تُرِك فارغاً، يتم جلب مواقيت الصلاة عبر البحث العام في الويب أو الخدمة الرسمية مباشرة.'}
             </span>
           </div>
         </div>
 
-        {/* Data Reset & Purge Demo Data Card (Aligned in single row alongside API Keys & Source Link) */}
+        {/* Compact Shortcuts Trigger Card */}
+        <div className="bento-card" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+          <div>
+            <h3 style={{ fontSize: '1.15rem', fontWeight: '700', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Keyboard size={20} style={{ color: 'var(--status-on-time)' }} />
+              <span>{isEn ? 'Keyboard Shortcuts & Controls' : 'اختصارات لوحة المفاتيح والتحكم السريع'}</span>
+            </h3>
+
+            <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)', marginBottom: '18px' }}>
+              {isEn ? 'Direct shortcuts for quick navigation, live scenes, audio, and focus mode without mouse.' : 'دليل اختصارات الكيبورد المباشرة للتنقل والتغيير السريع بين المشاهد الحية والتحكم بالصوت ووضع التركيز بدون ماوس.'}
+            </p>
+          </div>
+
+          <div>
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => setShowShortcutsModal(true)}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '9px 20px',
+                borderRadius: 'var(--radius-pill)',
+                fontWeight: '700',
+                fontSize: '0.84rem',
+                borderColor: 'rgba(255, 255, 255, 0.16)',
+                color: 'var(--text-primary)',
+                cursor: 'pointer',
+                transition: 'all 0.2s ease',
+              }}
+              id="btn-open-keyboard-shortcuts-modal"
+            >
+              <Keyboard size={16} />
+              <span>{isEn ? 'View Shortcuts Map' : 'عرض خريطة الاختصارات'}</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Ultra-Modern Keyboard Shortcuts Modal */}
+        {showShortcutsModal &&
+          ReactDOM.createPortal(
+            <div
+              style={{
+                position: 'fixed',
+                inset: 0,
+                zIndex: 9999,
+                backgroundColor: 'rgba(5, 6, 10, 0.82)',
+                backdropFilter: 'blur(24px)',
+                WebkitBackdropFilter: 'blur(24px)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '24px',
+                animation: 'fadeIn 0.2s ease-out',
+              }}
+              onClick={() => setShowShortcutsModal(false)}
+            >
+              <div
+                style={{
+                  position: 'relative',
+                  width: '100%',
+                  maxWidth: '600px',
+                  maxHeight: '90vh',
+                  overflowY: 'auto',
+                  backgroundColor: 'rgba(18, 20, 28, 0.95)',
+                  border: '1px solid rgba(255, 255, 255, 0.12)',
+                  borderRadius: '24px',
+                  padding: '32px',
+                  boxShadow: '0 30px 80px rgba(0, 0, 0, 0.85)',
+                }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                {/* Modal Header */}
+                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '24px', paddingBottom: '16px', borderBottom: '1px solid rgba(255, 255, 255, 0.08)' }}>
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                      <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: 'var(--status-on-time)' }} />
+                      <span style={{ fontSize: '0.7rem', fontWeight: '800', letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
+                        SHORTCUTS & COMMAND NAV
+                      </span>
+                    </div>
+                    <h3 style={{ fontSize: '1.25rem', fontWeight: '800', margin: 0, color: '#ffffff' }}>
+                      {isEn ? 'Control Map & Keyboard Shortcuts' : 'دليل لوحة التحكم والمفاتيح السريعة'}
+                    </h3>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowShortcutsModal(false)}
+                    style={{
+                      background: 'rgba(255, 255, 255, 0.05)',
+                      border: '1px solid rgba(255, 255, 255, 0.1)',
+                      borderRadius: '50%',
+                      width: '36px',
+                      height: '36px',
+                      color: 'var(--text-secondary)',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      transition: 'all 0.2s ease',
+                    }}
+                  >
+                    <XCircle size={18} />
+                  </button>
+                </div>
+
+                {/* Category 1: Live Stream & Scene Controls */}
+                <div style={{ marginBottom: '24px' }}>
+                  <div style={{ fontSize: '0.72rem', fontWeight: '700', letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--status-on-time)', marginBottom: '12px' }}>
+                    {isEn ? 'Live Stream & Scene Controls' : 'التحكم في المشاهد والبث الحي'}
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 18px', backgroundColor: 'rgba(255, 255, 255, 0.025)', borderRadius: '14px', border: '1px solid rgba(255, 255, 255, 0.06)' }}>
+                      <span style={{ fontSize: '0.88rem', color: 'var(--text-primary)', fontWeight: '600' }}>
+                        {isEn ? 'Switch between live scenes & backgrounds' : 'التبديل الفوري بين المشاهد والخلفيات الحية'}
+                      </span>
+                      <div style={{ display: 'flex', gap: '6px' }}>
+                        <kbd className="kbd-badge">RIGHT</kbd>
+                        <kbd className="kbd-badge">LEFT</kbd>
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 18px', backgroundColor: 'rgba(255, 255, 255, 0.025)', borderRadius: '14px', border: '1px solid rgba(255, 255, 255, 0.06)' }}>
+                      <span style={{ fontSize: '0.88rem', color: 'var(--text-primary)', fontWeight: '600' }}>
+                        {isEn ? 'Mute / Unmute Live Holy Stream Audio' : 'تفعيل أو كتم صوت البث الحي تدريجياً'}
+                      </span>
+                      <kbd className="kbd-badge">M</kbd>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 18px', backgroundColor: 'rgba(255, 255, 255, 0.025)', borderRadius: '14px', border: '1px solid rgba(255, 255, 255, 0.06)' }}>
+                      <span style={{ fontSize: '0.88rem', color: 'var(--text-primary)', fontWeight: '600' }}>
+                        {isEn ? 'Instant Re-sync live stream to present moment' : 'إعادة مزامنة البث المباشر لأحدث لحظة'}
+                      </span>
+                      <kbd className="kbd-badge">L</kbd>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Category 2: App Navigation & Focus View */}
+                <div>
+                  <div style={{ fontSize: '0.72rem', fontWeight: '700', letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: '12px' }}>
+                    {isEn ? 'App Navigation & Focus Mode' : 'الواجهة ونموذج التركيز'}
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 18px', backgroundColor: 'rgba(255, 255, 255, 0.025)', borderRadius: '14px', border: '1px solid rgba(255, 255, 255, 0.06)' }}>
+                      <span style={{ fontSize: '0.88rem', color: 'var(--text-primary)', fontWeight: '600' }}>
+                        {isEn ? 'Vertical navigation between tabs and pages' : 'التنقل الرأسي بين صفحات وتبويبات التطبيق'}
+                      </span>
+                      <div style={{ display: 'flex', gap: '6px' }}>
+                        <kbd className="kbd-badge">UP</kbd>
+                        <kbd className="kbd-badge">DOWN</kbd>
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 18px', backgroundColor: 'rgba(255, 255, 255, 0.025)', borderRadius: '14px', border: '1px solid rgba(255, 255, 255, 0.06)' }}>
+                      <span style={{ fontSize: '0.88rem', color: 'var(--text-primary)', fontWeight: '600' }}>
+                        {isEn ? 'Toggle Full Focus Mode' : 'تفعيل أو إخفاء وضع التركيز والشفافية'}
+                      </span>
+                      <kbd className="kbd-badge">F</kbd>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>,
+            document.body
+          )}
+
+        {/* Data Reset Card */}
         <div className="bento-card">
           <h3 style={{ fontSize: '1.15rem', fontWeight: '700', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
             <Trash2 size={20} style={{ color: 'var(--status-qada)' }} />
-            <span>مسح البيانات التجريبية والبدء من جديد</span>
+            <span>{isEn ? 'Data Management & Reset' : 'مسح البيانات والبدء من جديد'}</span>
           </h3>
 
           <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)', marginBottom: '16px' }}>
-            تم إلغاء البيانات الزائفة تماماً. انقر هنا لمسح وتصفير كافة سجلات التتبع التجريبية القديمة والبدء بسجلاتك الحقيقية 100%.
+            {isEn ? 'Click here to clear all recorded prayer history and start completely fresh.' : 'انقر هنا لمسح وتصفير كافة سجلات التتبع المحفوظة والبدء بسجلات جديدة 100%.'}
           </p>
 
           <button
             type="button"
             className="btn-secondary"
             onClick={() => {
-              clearAllRecords();
-              setSaveSuccessMsg('تم مسح وتصفير كافة البيانات التجريبية بنجاح ✓');
-              setTimeout(() => setSaveSuccessMsg(''), 3000);
+              if (window.confirm(isEn ? 'Warning: Are you sure you want to clear all prayer records?' : 'تحذير: هل أنت متأكد من مسح وتصفير جميع سجلات الصلوات؟')) {
+                clearAllRecords();
+                setSaveSuccessMsg(isEn ? 'All prayer records cleared successfully' : 'تم مسح وتصفير كافة البيانات بنجاح');
+                setTimeout(() => setSaveSuccessMsg(''), 3000);
+              }
             }}
             style={{ fontSize: '0.84rem', padding: '8px 18px', color: 'var(--status-qada)', borderColor: 'rgba(239, 68, 68, 0.4)' }}
             id="btn-clear-demo-records"
           >
             <Trash2 size={15} />
-            <span>تصفير وتطهير سجلات التتبع</span>
+            <span>{isEn ? 'Clear All Prayer Records' : 'تصفير سجلات الصلوات'}</span>
           </button>
         </div>
       </div>
@@ -616,7 +1046,7 @@ export default function SettingsView({ onSettingsSaved }) {
   );
 }
 
-function SearchableSelect({ label, value, options, onChange, placeholder, searchPlaceholder, icon: IconComp }) {
+function SearchableSelect({ label, value, options, onChange, placeholder, searchPlaceholder, icon: IconComp, isEn }) {
   const [isOpen, setIsOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -652,13 +1082,13 @@ function SearchableSelect({ label, value, options, onChange, placeholder, search
               <input
                 type="text"
                 className="form-input"
-                style={{ paddingRight: '32px', fontSize: '0.85rem' }}
+                style={{ [isEn ? 'paddingLeft' : 'paddingRight']: '32px', fontSize: '0.85rem' }}
                 placeholder={searchPlaceholder}
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 autoFocus
               />
-              <Search size={14} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+              <Search size={14} style={{ position: 'absolute', [isEn ? 'left' : 'right']: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
             </div>
 
             <div className="custom-select-options">
@@ -679,7 +1109,7 @@ function SearchableSelect({ label, value, options, onChange, placeholder, search
                 ))
               ) : (
                 <div style={{ padding: '12px', fontSize: '0.82rem', color: 'var(--text-muted)', textAlign: 'center' }}>
-                  لا توجد نتائج مطابقة
+                  {isEn ? 'No matching results' : 'لا توجد نتائج مطابقة'}
                 </div>
               )}
             </div>

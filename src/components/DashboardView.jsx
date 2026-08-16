@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   BarChart3,
   TrendingUp,
@@ -30,6 +30,7 @@ import {
   calculateNightTimes,
   toWesternDigits,
 } from '../services/storage';
+import { getTranslation } from '../services/i18n';
 
 ChartJS.register(
   CategoryScale,
@@ -42,15 +43,45 @@ ChartJS.register(
   Legend
 );
 
-export default function DashboardView() {
-  const [timeframe, setTimeframe] = useState('month'); // 'week', 'month', 'all'
-  const [chartType, setChartType] = useState('line'); // 'line' or 'bar'
+export default function DashboardView({ settings }) {
+  const lang = settings?.language || 'ar';
+  const isEn = lang === 'en';
+  const t = (k, fb) => getTranslation(lang, k, fb);
+
+  const [timeframe, setTimeframe] = useState('month');
+  const [chartType, setChartType] = useState('line');
   const [hoveredDay, setHoveredDay] = useState(null);
+  const [records, setRecords] = useState(() => getRecords());
+  const [prayerTimes, setPrayerTimes] = useState(() => getPrayerTimesCache());
 
-  const records = useMemo(() => getRecords(), []);
-  const stats = useMemo(() => computeSummaryStats(records), [records]);
+  useEffect(() => {
+    const handleRecordsUpdate = (e) => {
+      setRecords(e.detail || getRecords());
+    };
+    const handleTimesUpdate = (e) => {
+      setPrayerTimes(e.detail || getPrayerTimesCache());
+    };
+    window.addEventListener('records-updated', handleRecordsUpdate);
+    window.addEventListener('prayer-times-updated', handleTimesUpdate);
+    window.addEventListener('storage', handleRecordsUpdate);
+    return () => {
+      window.removeEventListener('records-updated', handleRecordsUpdate);
+      window.removeEventListener('prayer-times-updated', handleTimesUpdate);
+      window.removeEventListener('storage', handleRecordsUpdate);
+    };
+  }, []);
 
-  const prayerTimes = useMemo(() => getPrayerTimesCache(), []);
+  const filteredRecords = useMemo(() => {
+    if (timeframe === 'all') return records;
+    const daysLimit = timeframe === 'week' ? 7 : 30;
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - daysLimit);
+    const cutoffStr = cutoffDate.toISOString().slice(0, 10);
+    return records.filter((r) => r.date >= cutoffStr);
+  }, [records, timeframe]);
+
+  const stats = useMemo(() => computeSummaryStats(filteredRecords), [filteredRecords]);
+
   const nightTimes = useMemo(() => {
     return calculateNightTimes(prayerTimes?.Maghrib || '19:30', prayerTimes?.Fajr || '04:15');
   }, [prayerTimes]);
@@ -88,34 +119,31 @@ export default function DashboardView() {
 
       let level = 0;
       if (Object.keys(dayPrayers).length === 0) {
-        level = 'empty';
-      } else if (issues === 0) {
         level = 0;
-      } else if (issues === 1) {
-        level = 1;
-      } else if (issues === 2) {
-        level = 2;
-      } else if (issues === 3) {
+      } else if (issues === 0 && countOnTime === 5) {
+        level = 4; // Perfect on-time day!
+      } else if (issues === 0) {
         level = 3;
+      } else if (issues <= 2) {
+        level = 2;
       } else {
-        level = 4;
+        level = 1;
       }
 
       days.push({
         date: dateStr,
         level,
-        issues,
         countOnTime,
-        prayers: dayPrayers,
+        issues,
       });
     }
+
     return days;
   }, [records]);
 
-  // Aggregate Chart Data
+  // Generate Chart Data (Line/Bar)
   const chartData = useMemo(() => {
     const daysLimit = timeframe === 'week' ? 7 : timeframe === 'month' ? 30 : 90;
-
     const dates = [];
     const today = new Date();
     for (let i = daysLimit - 1; i >= 0; i--) {
@@ -156,7 +184,7 @@ export default function DashboardView() {
       labels: dates.map((d) => d.slice(5)), // MM-DD
       datasets: [
         {
-          label: 'في الوقت',
+          label: isEn ? 'On Time' : 'في الوقت',
           data: onTimeCounts,
           borderColor: '#10b981',
           backgroundColor: '#10b981',
@@ -166,7 +194,7 @@ export default function DashboardView() {
           fill: false,
         },
         {
-          label: 'متأخر',
+          label: isEn ? 'Late' : 'متأخر',
           data: lateCounts,
           borderColor: '#f59e0b',
           backgroundColor: '#f59e0b',
@@ -176,7 +204,7 @@ export default function DashboardView() {
           fill: false,
         },
         {
-          label: 'قضاء',
+          label: isEn ? 'Qada' : 'قضاء',
           data: qadaCounts,
           borderColor: '#ef4444',
           backgroundColor: '#ef4444',
@@ -186,7 +214,7 @@ export default function DashboardView() {
           fill: false,
         },
         {
-          label: 'لم تُؤدَّ',
+          label: isEn ? 'Missed' : 'لم تُؤدَّ',
           data: missedCounts,
           borderColor: '#64748b',
           backgroundColor: '#64748b',
@@ -197,276 +225,162 @@ export default function DashboardView() {
         },
       ],
     };
-  }, [records, timeframe]);
+  }, [records, timeframe, isEn]);
 
   const chartOptions = {
+    animation: false,
+    animations: false,
     responsive: true,
     maintainAspectRatio: false,
     plugins: {
       legend: {
-        position: 'top',
-        labels: {
-          color: '#f3f4f6',
-          font: { family: 'Baloo Bhaijaan 2', size: 12 },
-        },
+        display: false,
       },
       tooltip: {
-        rtl: true,
-        bodyFont: { family: 'Baloo Bhaijaan 2' },
-        titleFont: { family: 'Baloo Bhaijaan 2' },
+        rtl: !isEn,
+        bodyFont: { family: isEn ? 'Inter, sans-serif' : 'Baloo Bhaijaan 2' },
+        titleFont: { family: isEn ? 'Inter, sans-serif' : 'Baloo Bhaijaan 2' },
       },
     },
     scales: {
       x: {
         grid: { color: 'rgba(255, 255, 255, 0.05)' },
-        ticks: { color: '#9ca3af', font: { family: 'Baloo Bhaijaan 2' } },
+        ticks: { color: '#9ca3af', font: { family: isEn ? 'Inter, sans-serif' : 'Baloo Bhaijaan 2' } },
       },
       y: {
         min: 0,
         max: 5,
         grid: { color: 'rgba(255, 255, 255, 0.05)' },
-        ticks: { color: '#9ca3af', font: { family: 'Baloo Bhaijaan 2' }, stepSize: 1 },
+        ticks: { color: '#9ca3af', font: { family: isEn ? 'Inter, sans-serif' : 'Baloo Bhaijaan 2' }, stepSize: 1 },
       },
     },
   };
 
   return (
-    <div className="dashboard-view">
-      {/* Summary Stat Cards */}
-      <div className="section-header">
-        <div>
-          <h2 className="section-title">لوحة التحليلات والإحصائيات</h2>
-          <p className="section-subtitle">ملخص شامل لأداء الصلوات والتزام الأوقات السنوية ونظام تقسيم الليل.</p>
-        </div>
-      </div>
-
-      {/* Night Calculation Division Card */}
-      <div
-        className="bento-card"
-        style={{
-          padding: '20px 24px',
-          marginBottom: '28px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          flexWrap: 'wrap',
-          gap: '16px',
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <Moon size={22} style={{ color: 'var(--accent-blue)' }} />
-          <div>
-            <div style={{ fontSize: '1rem', fontWeight: '800', color: 'var(--text-primary)' }}>
-              نظام تقسيم الليل (من المغرب إلى الفجر)
+    <div className="dashboard-view" style={{ width: '100%', maxWidth: '1100px', margin: '0 auto' }}>
+      {/* Unified Bento Card: Stats Metrics + Analytics Chart */}
+      <div className="bento-card" style={{ padding: '28px' }}>
+        {/* Header: Title + Timeframe Filter Pills */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '16px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <div style={{ padding: '8px', backgroundColor: 'rgba(16, 185, 129, 0.12)', border: '1px solid rgba(16, 185, 129, 0.25)', borderRadius: 'var(--radius-sm)', color: 'var(--status-on-time)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <TrendingUp size={20} />
             </div>
-            <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
-              مدّة الليل الكلية اليوم: {toWesternDigits(Math.floor(nightTimes.nightDurationMinutes / 60))} ساعة و {toWesternDigits(nightTimes.nightDurationMinutes % 60)} دقيقة
+            <div>
+              <h3 style={{ fontSize: '1.2rem', fontWeight: '800', margin: 0, color: 'var(--text-primary)' }}>
+                {isEn ? 'Prayer Performance Trend' : 'مخطط أداء الصلوات عبر الزمن'}
+              </h3>
+              <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', margin: '3px 0 0 0' }}>
+                {isEn ? 'Accurate monitoring of commitment rates and metrics across selected timeframe.' : 'متابعة دقيقة لمعدلات الالتزام ومؤشرات الصلوات خلال النطاق الزمني المحدد.'}
+              </p>
             </div>
           </div>
-        </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
-          {/* Midnight Badge */}
-          <div
-            style={{
-              backgroundColor: 'var(--bg-primary)',
-              border: '1px solid var(--border-subtle)',
-              padding: '8px 16px',
-              borderRadius: 'var(--radius-pill)',
-              fontSize: '0.85rem',
-              color: 'var(--text-primary)',
-            }}
-          >
-            منتصف الليل الشرعي: <strong style={{ color: 'var(--accent-blue)' }}>{nightTimes.midnight12 || `${nightTimes.midnight} ص`}</strong>
-          </div>
-
-          {/* Last Third Badge */}
-          <div
-            style={{
-              backgroundColor: 'var(--status-on-time-bg)',
-              border: '1px solid rgba(16,185,129,0.3)',
-              padding: '8px 16px',
-              borderRadius: 'var(--radius-pill)',
-              fontSize: '0.85rem',
-              color: 'var(--status-on-time)',
-              fontWeight: '700',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-            }}
-          >
-            <Sparkles size={16} />
-            <span>الثلث الأخير (أفضل قيام): يبدأ من {nightTimes.lastThird} ص</span>
+          <div className="filter-pill-group">
+            <button
+              type="button"
+              className={`filter-pill-btn ${timeframe === 'week' ? 'active' : ''}`}
+              onClick={() => setTimeframe('week')}
+            >
+              <span>{isEn ? 'Weekly' : 'أسبوعي'}</span>
+            </button>
+            <button
+              type="button"
+              className={`filter-pill-btn ${timeframe === 'month' ? 'active' : ''}`}
+              onClick={() => setTimeframe('month')}
+            >
+              <span>{isEn ? 'Monthly' : 'شهري'}</span>
+            </button>
+            <button
+              type="button"
+              className={`filter-pill-btn ${timeframe === 'all' ? 'active' : ''}`}
+              onClick={() => setTimeframe('all')}
+            >
+              <span>{isEn ? '3 Months' : '3 أشهر'}</span>
+            </button>
           </div>
         </div>
-      </div>
 
-      <div className="stats-grid">
-        <div className="stat-card" id="stat-card-ontime">
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--status-on-time)' }}>
-            <CheckCircle size={20} />
-            <span className="stat-label">صلوات في الوقت</span>
-          </div>
-          <div className="stat-value" style={{ color: 'var(--status-on-time)' }}>{stats.onTime}</div>
-        </div>
-
-        <div className="stat-card" id="stat-card-late">
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--status-late)' }}>
-            <Clock size={20} />
-            <span className="stat-label">صلوات متأخرة</span>
-          </div>
-          <div className="stat-value" style={{ color: 'var(--status-late)' }}>{stats.late}</div>
-        </div>
-
-        <div className="stat-card" id="stat-card-qada">
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--status-qada)' }}>
-            <AlertTriangle size={20} />
-            <span className="stat-label">صلوات قضاء</span>
-          </div>
-          <div className="stat-value" style={{ color: 'var(--status-qada)' }}>{stats.qada}</div>
-        </div>
-
-        <div className="stat-card" id="stat-card-missed">
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--status-missed)' }}>
-            <XCircle size={20} />
-            <span className="stat-label">صلوات متروكة</span>
-          </div>
-          <div className="stat-value" style={{ color: 'var(--status-missed)' }}>{stats.missed}</div>
-        </div>
-
-        <div className="stat-card" id="stat-card-avgdelay">
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--accent-blue)' }}>
-            <Clock size={20} />
-            <span className="stat-label">متوسط التأخير العامة</span>
-          </div>
-          {stats.avgDelay >= 60 ? (
-            <div className="stat-value" style={{ fontSize: '1.8rem' }}>
-              {Math.floor(stats.avgDelay / 60)} <span style={{ fontSize: '1rem' }}>ساعة</span>
-              {stats.avgDelay % 60 > 0 && (
-                <>
-                  {' و '}{stats.avgDelay % 60} <span style={{ fontSize: '1rem' }}>دقيقة</span>
-                </>
-              )}
+        {/* Integrated Metrics Sub-Grid (Compact Minimalist) */}
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))',
+            gap: '10px',
+            marginBottom: '20px',
+          }}
+        >
+          <div style={{ background: 'rgba(255, 255, 255, 0.02)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '12px', padding: '10px 14px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '5px', color: 'var(--status-on-time)', fontSize: '0.75rem', fontWeight: '700' }}>
+              <CheckCircle size={14} />
+              <span>{isEn ? 'On Time' : 'في الوقت'}</span>
             </div>
-          ) : (
-            <div className="stat-value">{stats.avgDelay} <span style={{ fontSize: '1rem' }}>دقيقة</span></div>
-          )}
-        </div>
-
-        <div className="stat-card" id="stat-card-streak">
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#f97316' }}>
-            <Flame size={20} />
-            <span className="stat-label">أطول سلسلة كاملة (Streak)</span>
-          </div>
-          <div className="stat-value">{stats.maxStreak} <span style={{ fontSize: '1rem' }}>يوم</span></div>
-        </div>
-      </div>
-
-      {/* GitHub Style Heatmap Card */}
-      <div className="bento-card" style={{ marginBottom: '24px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
-          <div>
-            <h3 style={{ fontSize: '1.15rem', fontWeight: '700' }}>الخريطة الحرارية السنوية (365 يومًا)</h3>
-            <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-              تدرج الألوان يعكس نسبة الالتزام في كل يوم (الأخضر: كامل الالتزام، الأصفر/الأحمر: وجود تأخير/ترك).
-            </p>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-            <span>التزام تام</span>
-            <span className="heatmap-cell level-0" style={{ display: 'inline-block' }}></span>
-            <span className="heatmap-cell level-1" style={{ display: 'inline-block' }}></span>
-            <span className="heatmap-cell level-2" style={{ display: 'inline-block' }}></span>
-            <span className="heatmap-cell level-3" style={{ display: 'inline-block' }}></span>
-            <span className="heatmap-cell level-4" style={{ display: 'inline-block' }}></span>
-            <span>تعثر/تأخير</span>
-          </div>
-        </div>
-
-        <div className="heatmap-container" style={{ position: 'relative' }}>
-          <div className="heatmap-grid">
-            {heatmapData.map((d, index) => (
-              <div
-                key={index}
-                className={`heatmap-cell ${d.level === 'empty' ? 'level-empty' : `level-${d.level}`}`}
-                onMouseEnter={() => setHoveredDay(d)}
-                onMouseLeave={() => setHoveredDay(null)}
-              />
-            ))}
+            <div className="stat-value" style={{ fontSize: '1.45rem', fontWeight: '800', color: 'var(--status-on-time)', marginTop: '2px' }}>
+              {stats.onTime}
+            </div>
           </div>
 
-          {hoveredDay && (
-            <div className="custom-tooltip">
-              <div style={{ fontWeight: '700', marginBottom: '4px' }}>التاريخ: {hoveredDay.date}</div>
-              <div>عدد الإشكالات (تأخير/قضاء/ترك): {hoveredDay.issues}</div>
-              <div style={{ marginTop: '4px', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
-                {PRAYER_NAMES.map((p) => {
-                  const status = hoveredDay.prayers?.[p.id]?.status || 'غير مسجلة';
-                  return (
-                    <span key={p.id} style={{ marginLeft: '6px' }}>
-                      {p.nameAr}: ({status})
-                    </span>
-                  );
-                })}
+          <div style={{ background: 'rgba(255, 255, 255, 0.02)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '12px', padding: '10px 14px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '5px', color: 'var(--status-late)', fontSize: '0.75rem', fontWeight: '700' }}>
+              <Clock size={14} />
+              <span>{isEn ? 'Late' : 'متأخرة'}</span>
+            </div>
+            <div className="stat-value" style={{ fontSize: '1.45rem', fontWeight: '800', color: 'var(--status-late)', marginTop: '2px' }}>
+              {stats.late}
+            </div>
+          </div>
+
+          <div style={{ background: 'rgba(255, 255, 255, 0.02)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '12px', padding: '10px 14px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '5px', color: 'var(--status-qada)', fontSize: '0.75rem', fontWeight: '700' }}>
+              <AlertTriangle size={14} />
+              <span>{isEn ? 'Qada' : 'قضاء'}</span>
+            </div>
+            <div className="stat-value" style={{ fontSize: '1.45rem', fontWeight: '800', color: 'var(--status-qada)', marginTop: '2px' }}>
+              {stats.qada}
+            </div>
+          </div>
+
+          <div style={{ background: 'rgba(255, 255, 255, 0.02)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '12px', padding: '10px 14px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '5px', color: 'var(--status-missed)', fontSize: '0.75rem', fontWeight: '700' }}>
+              <XCircle size={14} />
+              <span>{isEn ? 'Missed' : 'متروكة'}</span>
+            </div>
+            <div className="stat-value" style={{ fontSize: '1.45rem', fontWeight: '800', color: 'var(--status-missed)', marginTop: '2px' }}>
+              {stats.missed}
+            </div>
+          </div>
+
+          <div style={{ background: 'rgba(255, 255, 255, 0.02)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '12px', padding: '10px 14px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '5px', color: 'var(--accent-blue)', fontSize: '0.75rem', fontWeight: '700' }}>
+              <Clock size={14} />
+              <span>{isEn ? 'Avg Delay' : 'متوسط التأخير'}</span>
+            </div>
+            {stats.avgDelay >= 60 ? (
+              <div className="stat-value" style={{ fontSize: '1.15rem', fontWeight: '800', color: 'var(--text-primary)', marginTop: '2px' }}>
+                {Math.floor(stats.avgDelay / 60)} <span style={{ fontSize: '0.75rem' }}>{isEn ? 'h' : 'ساعة'}</span>
+                {stats.avgDelay % 60 > 0 && ` & ${stats.avgDelay % 60} ${isEn ? 'm' : 'د'}`}
               </div>
-            </div>
-          )}
-        </div>
-      </div>
+            ) : (
+              <div className="stat-value" style={{ fontSize: '1.45rem', fontWeight: '800', color: 'var(--text-primary)', marginTop: '2px' }}>
+                {stats.avgDelay} <span style={{ fontSize: '0.8rem' }}>{isEn ? 'mins' : 'دقيقة'}</span>
+              </div>
+            )}
+          </div>
 
-      {/* Analytics Chart */}
-      <div className="bento-card">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
-          <h3 style={{ fontSize: '1.15rem', fontWeight: '700' }}>مخطط أداء الصلوات عبر الزمن (خطي)</h3>
-          
-          <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-            <div className="nav-tabs">
-              <button
-                className={`nav-btn ${chartType === 'line' ? 'active' : ''}`}
-                onClick={() => setChartType('line')}
-                id="chart-type-line-btn"
-              >
-                <TrendingUp size={16} />
-                <span>رسم خطي</span>
-              </button>
-              <button
-                className={`nav-btn ${chartType === 'bar' ? 'active' : ''}`}
-                onClick={() => setChartType('bar')}
-                id="chart-type-bar-btn"
-              >
-                <BarChart3 size={16} />
-                <span>أعمدة</span>
-              </button>
+          <div style={{ background: 'rgba(255, 255, 255, 0.02)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '12px', padding: '10px 14px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '5px', color: '#f97316', fontSize: '0.75rem', fontWeight: '700' }}>
+              <Flame size={14} />
+              <span>{isEn ? 'Max Streak' : 'أطول سلسلة'}</span>
             </div>
-
-            <div className="nav-tabs">
-              <button
-                className={`nav-btn ${timeframe === 'week' ? 'active' : ''}`}
-                onClick={() => setTimeframe('week')}
-              >
-                أسبوعي
-              </button>
-              <button
-                className={`nav-btn ${timeframe === 'month' ? 'active' : ''}`}
-                onClick={() => setTimeframe('month')}
-              >
-                شهري
-              </button>
-              <button
-                className={`nav-btn ${timeframe === 'all' ? 'active' : ''}`}
-                onClick={() => setTimeframe('all')}
-              >
-                3 أشهر
-              </button>
+            <div className="stat-value" style={{ fontSize: '1.45rem', fontWeight: '800', color: '#f97316', marginTop: '2px' }}>
+              {stats.maxStreak} <span style={{ fontSize: '0.8rem' }}>{isEn ? 'days' : 'يوم'}</span>
             </div>
           </div>
         </div>
 
+        {/* Chart Line */}
         <div style={{ height: '340px' }}>
-          {chartType === 'line' ? (
-            <Line data={chartData} options={chartOptions} />
-          ) : (
-            <Bar data={chartData} options={chartOptions} />
-          )}
+          <Line data={chartData} options={chartOptions} />
         </div>
       </div>
     </div>

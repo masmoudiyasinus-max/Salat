@@ -1,9 +1,12 @@
 import React, { useState } from 'react';
-import { Key, ExternalLink, Sparkles, Check, X, ShieldAlert } from 'lucide-react';
+import { Key, ExternalLink, Sparkles, Check, X } from 'lucide-react';
 
 export default function WelcomeModal({ isOpen, onClose, onSaveKeys, currentSettings }) {
   const [tavilyKey, setTavilyKey] = useState(currentSettings?.tavilyApiKey || '');
   const [geminiKey, setGeminiKey] = useState(currentSettings?.geminiApiKey || '');
+
+  const lang = currentSettings?.language || 'ar';
+  const isEn = lang === 'en';
 
   if (!isOpen) return null;
 
@@ -55,14 +58,14 @@ export default function WelcomeModal({ isOpen, onClose, onSaveKeys, currentSetti
           style={{
             position: 'absolute',
             top: '18px',
-            left: '18px',
+            [isEn ? 'right' : 'left']: '18px',
             background: 'none',
             border: 'none',
             color: 'var(--text-muted)',
             cursor: 'pointer',
             padding: '4px',
           }}
-          title="تخطي"
+          title={isEn ? 'Skip' : 'تخطي'}
         >
           <X size={20} />
         </button>
@@ -86,10 +89,10 @@ export default function WelcomeModal({ isOpen, onClose, onSaveKeys, currentSetti
             <Sparkles size={28} />
           </div>
           <h2 style={{ fontSize: '1.4rem', fontWeight: '800', margin: '0 0 6px 0' }}>
-            مرحباً بك في متابع الصلوات
+            {isEn ? 'Welcome to Prayer Tracker' : 'مرحباً بك في متابع الصلوات'}
           </h2>
           <p style={{ fontSize: '0.88rem', color: 'var(--text-muted)', margin: 0, lineHeight: 1.5 }}>
-            للحصول على المزامنة الفورية لمواقيت الصلاة عبر الويب، يلزم توفير مفاتيح API المجانية التالية:
+            {isEn ? 'To enable real-time web sync for prayer times and Sheikh Muneer AI, you can provide the following keys:' : 'للحصول على المزامنة الفورية لمواقيت الصلاة عبر الويب، يلزم توفير مفاتيح API المجانية التالية:'}
           </p>
         </div>
 
@@ -106,7 +109,7 @@ export default function WelcomeModal({ isOpen, onClose, onSaveKeys, currentSetti
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: '700', fontSize: '0.92rem' }}>
               <Key size={16} style={{ color: 'var(--status-late)' }} />
-              <span>مفتاح Tavily API (مطلوب للمزامنة الحية)</span>
+              <span>{isEn ? 'Tavily API Key' : 'مفتاح Tavily API'}</span>
             </div>
             <a
               href="https://tavily.com"
@@ -122,18 +125,18 @@ export default function WelcomeModal({ isOpen, onClose, onSaveKeys, currentSetti
                 textDecoration: 'none',
               }}
             >
-              <span>احصل عليه من Tavily</span>
+              <span>{isEn ? 'Get from Tavily' : 'احصل عليه من Tavily'}</span>
               <ExternalLink size={13} />
             </a>
           </div>
 
           <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '10px', lineHeight: 1.4 }}>
-            يقوم بالبحث عن مواقيت الصلاة لمدينتك بدقة من الشبكة مباشرة. بدون هذا المفتاح تكون المزامنة غير ممكنة.
+            {isEn ? 'Fetches prayer times accurately from live web sources.' : 'يقوم بالبحث عن مواقيت الصلاة لمدينتك بدقة من الشبكة مباشرة.'}
           </p>
 
           <input
             type="password"
-            placeholder="ألصق مفتاح Tavily هنا (tvly-...)"
+            placeholder={isEn ? 'Paste Tavily API Key here' : 'ألصق مفتاح Tavily هنا'}
             value={tavilyKey}
             onChange={(e) => setTavilyKey(e.target.value)}
             style={{
@@ -162,7 +165,7 @@ export default function WelcomeModal({ isOpen, onClose, onSaveKeys, currentSetti
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: '700', fontSize: '0.92rem' }}>
               <Key size={16} style={{ color: 'var(--accent-blue)' }} />
-              <span>مفتاح Gemini API (للذكاء الاصطناعي)</span>
+              <span>{isEn ? 'Gemini API Key' : 'مفتاح Gemini API'}</span>
             </div>
             <a
               href="https://aistudio.google.com/"
@@ -178,18 +181,18 @@ export default function WelcomeModal({ isOpen, onClose, onSaveKeys, currentSetti
                 textDecoration: 'none',
               }}
             >
-              <span>احصل عليه من AI Studio</span>
+              <span>{isEn ? 'Get from AI Studio' : 'احصل عليه من AI Studio'}</span>
               <ExternalLink size={13} />
             </a>
           </div>
 
           <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '10px', lineHeight: 1.4 }}>
-            مفتاح مجاني من غوغل لتحليل التوقيتات وتفعيل المساعد الذكي والشات.
+            {isEn ? 'Free Google API key for Sheikh Muneer AI companion and habit insights.' : 'مفتاح مجاني من غوغل لتحليل التوقيتات وتفعيل المساعد الذكي والشات.'}
           </p>
 
           <input
             type="password"
-            placeholder="ألصق مفتاح Gemini هنا (AIzaSy...)"
+            placeholder={isEn ? 'Paste Gemini API Key here' : 'ألصق مفتاح Gemini هنا'}
             value={geminiKey}
             onChange={(e) => setGeminiKey(e.target.value)}
             style={{
@@ -220,7 +223,7 @@ export default function WelcomeModal({ isOpen, onClose, onSaveKeys, currentSetti
             }}
           >
             <Check size={18} />
-            <span>حفظ المفاتيح وبدء الاستخدام</span>
+            <span>{isEn ? 'Save Keys & Get Started' : 'حفظ المفاتيح وبدء الاستخدام'}</span>
           </button>
 
           <button
@@ -238,7 +241,7 @@ export default function WelcomeModal({ isOpen, onClose, onSaveKeys, currentSetti
               whiteSpace: 'nowrap',
             }}
           >
-            تخطي المتابعة
+            {isEn ? 'Skip for now' : 'تخطي المتابعة'}
           </button>
         </div>
 

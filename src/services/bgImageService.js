@@ -1,34 +1,52 @@
 // Service for 5-slot daily location & weather background image fetching & caching with Rejection & Replacement support
 
-export function getCurrentTimeSlot(cityDate = new Date()) {
+export function getCurrentTimeSlot(cityDate = new Date(), lang = 'ar') {
+  const isEn = lang === 'en';
   const hour = cityDate.getHours();
   if (hour >= 4 && hour < 9) {
-    return { id: 'slot_1_dawn', nameAr: 'الفجر والصباح', queryTime: 'morning dawn sunrise' };
+    return { id: 'slot_1_dawn', nameAr: isEn ? 'Dawn & Morning' : 'الفجر والصباح', queryTime: 'morning dawn sunrise' };
   } else if (hour >= 9 && hour < 15) {
-    return { id: 'slot_2_midday', nameAr: 'الظهر والظهيرة', queryTime: 'sunny midday sky' };
+    return { id: 'slot_2_midday', nameAr: isEn ? 'Midday & Noon' : 'الظهر والظهيرة', queryTime: 'sunny midday sky' };
   } else if (hour >= 15 && hour < 19) {
-    return { id: 'slot_3_afternoon', nameAr: 'العصر والغسق', queryTime: 'sunset afternoon' };
+    return { id: 'slot_3_afternoon', nameAr: isEn ? 'Afternoon & Dusk' : 'العصر والغسق', queryTime: 'sunset afternoon' };
   } else if (hour >= 19 && hour < 22) {
-    return { id: 'slot_4_evening', nameAr: 'المغرب والعشاء', queryTime: 'dusk evening' };
+    return { id: 'slot_4_evening', nameAr: isEn ? 'Evening & Nightfall' : 'المغرب والعشاء', queryTime: 'dusk evening' };
   } else {
-    return { id: 'slot_5_night', nameAr: 'منتصف الليل وآخر الليل', queryTime: 'night starry sky' };
+    return { id: 'slot_5_night', nameAr: isEn ? 'Midnight & Late Night' : 'منتصف الليل وآخر الليل', queryTime: 'night starry sky' };
   }
 }
 
-export function getWeatherCommentary(city, slotId) {
-  const cName = city || 'مدينتك';
+export function getWeatherCommentary(city, slotId, lang = 'ar') {
+  const isEn = lang === 'en';
+  const cName = city || (isEn ? 'your city' : 'مدينتك');
+  if (isEn) {
+    switch (slotId) {
+      case 'slot_1_dawn':
+        return `Serene dawn and refreshing breeze in ${cName}`;
+      case 'slot_2_midday':
+        return `Sunny and vibrant atmosphere in ${cName}`;
+      case 'slot_3_afternoon':
+        return `Peaceful afternoon as the sun descends in ${cName}`;
+      case 'slot_4_evening':
+        return `Pleasant evening ambiance in ${cName}`;
+      case 'slot_5_night':
+      default:
+        return `Calm night and clear skies in ${cName}`;
+    }
+  }
+
   switch (slotId) {
     case 'slot_1_dawn':
-      return `أجواء فجرية خاشعة ولطيفة في ${cName} (فترة الفجر والصباح)`;
+      return `أجواء فجرية خاشعة ولطيفة في ${cName}`;
     case 'slot_2_midday':
-      return `طقس مشمس وأجواء مفعمة بالحيوية في ${cName} (فترة الظهر والظهيرة)`;
+      return `طقس مشمس وأجواء مفعمة بالحيوية في ${cName}`;
     case 'slot_3_afternoon':
-      return `أجواء هادئة مع ميلان الشمس للغروب في ${cName} (فترة العصر والغسق)`;
+      return `أجواء هادئة مع ميلان الشمس للغروب في ${cName}`;
     case 'slot_4_evening':
-      return `أجواء مسائية عطرة ومستقرة في ${cName} (فترة المغرب والعشاء)`;
+      return `أجواء مسائية عطرة ومستقرة في ${cName}`;
     case 'slot_5_night':
     default:
-      return `أجواء ليلية ساكنة وصفاء في السماء في ${cName} (فترة منتصف الليل)`;
+      return `أجواء ليلية ساكنة وصفاء في السماء في ${cName}`;
   }
 }
 
@@ -60,11 +78,13 @@ function checkImageLoadable(srcUrl) {
 }
 
 export async function fetchLocationWeatherBgImage(settings, cityDate = new Date(), forceNext = false) {
+  const lang = settings?.language || 'ar';
+  const isEn = lang === 'en';
   const city = settings?.city || 'Makkah';
   const country = settings?.country || '';
   const apiKey = settings?.tavilyApiKey || '';
-  const slot = getCurrentTimeSlot(cityDate);
-  const commentary = getWeatherCommentary(city, slot.id);
+  const slot = getCurrentTimeSlot(cityDate, lang);
+  const commentary = getWeatherCommentary(city, slot.id, lang);
 
   // Retrieve rejected image URLs from localStorage
   const rejectedKey = `bg_rejected_imgs_${city.toLowerCase().replace(/\s+/g, '_')}`;
@@ -83,7 +103,9 @@ export async function fetchLocationWeatherBgImage(settings, cityDate = new Date(
       imageUrl: cachedUrl,
       slotName: slot.nameAr,
       weatherCommentary: commentary,
-      source: apiKey ? `بحث الويب الحقيقي (${city})` : `معرض المشاهد الطبيعية (${city})`,
+      source: apiKey
+        ? (isEn ? `Live Web Search - ${city}` : `بحث الويب الحقيقي - ${city}`)
+        : (isEn ? `Nature Gallery - ${city}` : `معرض المشاهد الطبيعية - ${city}`),
       isCached: true,
     };
   }
@@ -125,7 +147,7 @@ export async function fetchLocationWeatherBgImage(settings, cityDate = new Date(
                   imageUrl: imgUrl,
                   slotName: slot.nameAr,
                   weatherCommentary: commentary,
-                  source: `بحث الويب الحقيقي (${city})`,
+                  source: isEn ? `Live Web Search - ${city}` : `بحث الويب الحقيقي - ${city}`,
                   isCached: false,
                 };
               }
@@ -155,7 +177,7 @@ export async function fetchLocationWeatherBgImage(settings, cityDate = new Date(
     imageUrl: candidate,
     slotName: slot.nameAr,
     weatherCommentary: commentary,
-    source: 'معرض المشاهد الطبيعية عالية الدقة (Unsplash HD)',
+    source: isEn ? 'Nature Gallery Unsplash HD' : 'معرض المشاهد الطبيعية عالية الدقة Unsplash HD',
     isCached: false,
   };
 }

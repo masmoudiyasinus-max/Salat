@@ -30,6 +30,31 @@ export function getCityNowDate(timezoneStr) {
   }
 }
 
+export function formatTimeDisplay(timeStr, timeFormat = '12', lang = '') {
+  if (!timeStr || typeof timeStr !== 'string') return '';
+  const clean = timeStr.trim();
+  if (!clean.includes(':')) return clean;
+
+  if (timeFormat === '24') {
+    return toWesternDigits(clean);
+  }
+
+  const [hStr, mStr] = clean.split(':');
+  let h = parseInt(hStr, 10);
+  const m = mStr.substring(0, 2);
+
+  if (isNaN(h)) return toWesternDigits(clean);
+
+  const activeLang = lang || (typeof window !== 'undefined' ? (getSettings()?.language || 'ar') : 'ar');
+  const isEn = activeLang === 'en';
+  const period = h >= 12 ? (isEn ? 'PM' : 'م') : (isEn ? 'AM' : 'ص');
+  h = h % 12;
+  if (h === 0) h = 12;
+
+  const formattedH = String(h).padStart(2, '0');
+  return toWesternDigits(`${formattedH}:${m} ${period}`);
+}
+
 const DEFAULT_SETTINGS = {
   geminiApiKey: '',
   tavilyApiKey: '',
@@ -41,6 +66,8 @@ const DEFAULT_SETTINGS = {
   activeCustomBgImage: '',
   youtubeLiveUrl: 'https://www.youtube-nocookie.com/embed/m9-Umj3aL1I',
   bgMode: 'makkah',
+  timeFormat: '12',
+  language: 'ar',
 };
 
 const DEFAULT_PRAYER_TIMES = {
@@ -63,13 +90,43 @@ export const PRAYER_NAMES = [
 export const NAFL_PRAYERS = [
   { id: 'Sunnah_Fajr', nameAr: 'سنة الفجر', rakaat: '2 ركعة قبلية', timing: 'قبل صلاة الفجر' },
   { id: 'Duha', nameAr: 'صلاة الضحى', rakaat: '2 - 8 ركعات', timing: 'من الشروق+15د إلى قبل الظهر' },
-  { id: 'Sunnah_Dhuhr_Pre', nameAr: 'سنة الظهر القبلية', rakaat: '4 ركعات (مثنى)', timing: 'بعد دخول وقت الظهر (بعد الأذان) وقبل الفريضة' },
+  { id: 'Sunnah_Dhuhr_Pre', nameAr: 'سنة الظهر القبلية', rakaat: '4 ركعات', timing: 'بعد دخول وقت الظهر وقبل الفريضة' },
   { id: 'Sunnah_Dhuhr_Post', nameAr: 'سنة الظهر البعدية', rakaat: '2 ركعة بعدية', timing: 'بعد صلاة الظهر' },
   { id: 'Sunnah_Maghrib', nameAr: 'سنة المغرب البعدية', rakaat: '2 ركعة بعدية', timing: 'بعد صلاة المغرب' },
   { id: 'Sunnah_Isha', nameAr: 'سنة العشاء البعدية', rakaat: '2 ركعة بعدية', timing: 'بعد صلاة العشاء' },
   { id: 'Qiyam_Layl', nameAr: 'قيام الليل', rakaat: 'مثنى مثنى', timing: 'من بعد العشاء إلى الفجر' },
   { id: 'Witr', nameAr: 'صلاة الوتر', rakaat: '1 - 5 ركعات', timing: 'ختام صلوات الليل' },
 ];
+
+export function getCurrentObligatoryPrayerId(prayerTimes, safeNow = new Date()) {
+  if (!prayerTimes) return 'Fajr';
+  const parseMins = (t) => {
+    if (!t || typeof t !== 'string' || !t.includes(':')) return -1;
+    const [h, m] = t.split(':').map(Number);
+    if (isNaN(h) || isNaN(m)) return -1;
+    return h * 60 + m;
+  };
+  const currentMins = safeNow.getHours() * 60 + safeNow.getMinutes();
+  const fajrMins = parseMins(prayerTimes.Fajr) !== -1 ? parseMins(prayerTimes.Fajr) : 4 * 60 + 15;
+  const dhuhrMins = parseMins(prayerTimes.Dhuhr) !== -1 ? parseMins(prayerTimes.Dhuhr) : 12 * 60 + 30;
+  const asrMins = parseMins(prayerTimes.Asr) !== -1 ? parseMins(prayerTimes.Asr) : 16 * 60;
+  const maghribMins = parseMins(prayerTimes.Maghrib) !== -1 ? parseMins(prayerTimes.Maghrib) : 19 * 60 + 30;
+  const ishaMins = parseMins(prayerTimes.Isha) !== -1 ? parseMins(prayerTimes.Isha) : 20 * 60 + 45;
+
+  if (currentMins >= fajrMins && currentMins < dhuhrMins) {
+    return 'Fajr';
+  }
+  if (currentMins >= dhuhrMins && currentMins < asrMins) {
+    return 'Dhuhr';
+  }
+  if (currentMins >= asrMins && currentMins < maghribMins) {
+    return 'Asr';
+  }
+  if (currentMins >= maghribMins && currentMins < ishaMins) {
+    return 'Maghrib';
+  }
+  return 'Isha';
+}
 
 export function calculateNightTimes(maghribTimeStr, fajrTimeStr) {
   if (!maghribTimeStr || !fajrTimeStr) {
@@ -124,6 +181,9 @@ export function getNaflRecords() {
 
 export function saveNaflRecords(records) {
   localStorage.setItem(KEYS.NAFL_RECORDS, JSON.stringify(records));
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('nafl-records-updated', { detail: records }));
+  }
 }
 
 export function toggleNaflRecord(date, naflId) {
@@ -169,6 +229,9 @@ export function getPrayerTimesCache() {
 
 export function savePrayerTimesCache(times) {
   localStorage.setItem(KEYS.TIMES, JSON.stringify(times));
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('prayer-times-updated', { detail: times }));
+  }
 }
 
 export function getRecords() {
@@ -179,11 +242,7 @@ export function getRecords() {
   }
   try {
     const parsed = JSON.parse(data);
-    // Auto purge old fake demo data (records generated with demo pattern)
-    if (Array.isArray(parsed) && parsed.length >= 400 && parsed.some((r) => r.performed_time === '12:35')) {
-      saveRecords([]);
-      return [];
-    }
+    if (!Array.isArray(parsed)) return [];
     return parsed;
   } catch (e) {
     return [];
@@ -192,11 +251,15 @@ export function getRecords() {
 
 export function saveRecords(records) {
   localStorage.setItem(KEYS.RECORDS, JSON.stringify(records));
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('records-updated', { detail: records }));
+  }
 }
 
 export function clearAllRecords() {
   saveRecords([]);
   saveNaflRecords([]);
+  localStorage.removeItem('prayer_re_toggle_history');
   return [];
 }
 
@@ -278,29 +341,43 @@ export function sanitizeChatSessions(sessions) {
     title: typeof sess.title === 'string' ? sess.title : 'محادثة',
     createdAt: sess.createdAt || new Date().toISOString(),
     updatedAt: sess.updatedAt || new Date().toISOString(),
-    messages: Array.isArray(sess.messages)
-      ? sess.messages.map((m, mIdx) => ({
-          id: m.id || `msg_${mIdx}_${Date.now()}`,
-          sender: m.sender === 'user' ? 'user' : 'assistant',
-          text:
-            typeof m.text === 'string'
-              ? m.text
-              : typeof m.text === 'object' && m.text !== null
-              ? m.text.error || m.text.message || JSON.stringify(m.text)
-              : String(m.text || ''),
-          attachedFiles: Array.isArray(m.attachedFiles) ? m.attachedFiles : [],
-          timestamp: m.timestamp || '12:00',
-          usedSearch: Boolean(m.usedSearch),
-          durationSeconds: m.durationSeconds ? String(m.durationSeconds) : null,
-          isEdited: Boolean(m.isEdited),
-          isRegenerated: Boolean(m.isRegenerated),
-        }))
-      : [],
+        messages: Array.isArray(sess.messages)
+          ? sess.messages
+              .filter((m) => {
+                const textVal = typeof m.text === 'string' ? m.text : String(m.text || '');
+                return (
+                  !textVal.includes('أهلاً بك! أنا الشيخ منير، رفيقك ومعينك') &&
+                  !textVal.includes('تم إعادة تهيئة المحادثة') &&
+                  !textVal.includes('Claude Opus 4.8 System Prompt')
+                );
+              })
+              .map((m, mIdx) => {
+                const textVal =
+                  typeof m.text === 'string'
+                    ? m.text
+                    : typeof m.text === 'object' && m.text !== null
+                    ? m.text.error || m.text.message || JSON.stringify(m.text)
+                    : String(m.text || '');
+
+                return {
+                  id: m.id || `msg_${mIdx}_${Date.now()}`,
+                  sender: m.sender === 'user' ? 'user' : 'assistant',
+                  text: textVal,
+                  attachedFiles: Array.isArray(m.attachedFiles) ? m.attachedFiles : [],
+                  timestamp: m.timestamp || '12:00',
+                  usedSearch: Boolean(m.usedSearch),
+                  durationSeconds: m.durationSeconds ? String(m.durationSeconds) : null,
+                  isEdited: Boolean(m.isEdited),
+                  isRegenerated: Boolean(m.isRegenerated),
+                };
+              })
+          : [],
   }));
 }
 
 export function getChatSessions() {
   const data = localStorage.getItem(KEYS.CHAT_SESSIONS);
+  const activeId = localStorage.getItem(KEYS.ACTIVE_SESSION_ID) || '';
   if (!data) {
     const defaultSession = createInitialChatSession();
     localStorage.setItem(KEYS.CHAT_SESSIONS, JSON.stringify([defaultSession]));
@@ -309,7 +386,15 @@ export function getChatSessions() {
   }
   try {
     const parsed = JSON.parse(data);
-    const sanitized = sanitizeChatSessions(parsed);
+    let sanitized = sanitizeChatSessions(parsed);
+    // Auto-purge any empty sessions (0 messages) that are not the currently active session
+    sanitized = sanitized.filter((s) => {
+      const hasMsgs = Array.isArray(s.messages) && s.messages.length > 0;
+      return hasMsgs || s.id === activeId;
+    });
+    if (sanitized.length === 0) {
+      sanitized = [createInitialChatSession()];
+    }
     saveChatSessions(sanitized);
     return sanitized;
   } catch (e) {
@@ -340,21 +425,16 @@ export function saveActiveSessionId(id) {
 }
 
 export function createNewSession(customTitle = '') {
-  const sessions = getChatSessions();
+  let sessions = getChatSessions();
+  // Auto-remove any empty sessions before adding a fresh session
+  sessions = sessions.filter((s) => Array.isArray(s.messages) && s.messages.length > 0);
   const newId = 'session_' + Date.now();
   const newSession = {
     id: newId,
     title: customTitle || `محادثة جديدة ${new Date().toLocaleDateString('ar-EG-u-nu-latn')}`,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
-    messages: [
-      {
-        id: '1',
-        sender: 'assistant',
-        text: 'أهلاً بك! أنا رفيقك الذكي لمتابعة روتينك اليومي والتزامك بالصلوات (Claude Opus 4.8 System Prompt). تحدث معي بحرية عن خططك أو اطلب مني تحليلاً لالتزامك.',
-        timestamp: new Date().toLocaleTimeString('ar-EG-u-nu-latn', { hour: '2-digit', minute: '2-digit' }),
-      },
-    ],
+    messages: [],
   };
 
   const updated = [newSession, ...sessions];
@@ -385,6 +465,21 @@ export function updateSessionMessages(sessionId, messages) {
   return sessions;
 }
 
+export function updateSessionTitle(sessionId, newTitle) {
+  if (!sessionId || !newTitle || !newTitle.trim()) return getChatSessions();
+  const sessions = getChatSessions();
+  const idx = sessions.findIndex((s) => s.id === sessionId);
+  if (idx >= 0) {
+    sessions[idx] = {
+      ...sessions[idx],
+      title: newTitle.trim(),
+      updatedAt: new Date().toISOString(),
+    };
+    saveChatSessions(sessions);
+  }
+  return sessions;
+}
+
 export function deleteSession(sessionId) {
   let sessions = getChatSessions();
   sessions = sessions.filter((s) => s.id !== sessionId);
@@ -405,14 +500,7 @@ function createInitialChatSession() {
     title: 'محادثة رئيسية',
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
-    messages: [
-      {
-        id: '1',
-        sender: 'assistant',
-        text: 'أهلاً بك! أنا رفيقك الذكي لمتابعة روتينك اليومي والتزامك بالصلوات (Claude Opus 4.8 System Prompt). تحدث معي بحرية عن خططك، يومياتك، أو اطلب مني تحليلاً لالتزامك.',
-        timestamp: new Date().toLocaleTimeString('ar-EG-u-nu-latn', { hour: '2-digit', minute: '2-digit' }),
-      },
-    ],
+    messages: [],
   };
 }
 

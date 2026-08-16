@@ -5,7 +5,6 @@ import PrayerTrackerView from './components/PrayerTrackerView';
 import DashboardView from './components/DashboardView';
 import ChatView from './components/ChatView';
 import SettingsView from './components/SettingsView';
-import WelcomeModal from './components/WelcomeModal';
 import { getSettings, saveSettings } from './services/storage';
 
 export function extractYouTubeId(url) {
@@ -47,10 +46,29 @@ export default function App() {
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [isWallpaperFocusMode, setIsWallpaperFocusMode] = useState(false);
   const [isAudioMuted, setIsAudioMuted] = useState(true);
+  const isAudioMutedRef = useRef(true);
   const [syncToastMsg, setSyncToastMsg] = useState('');
-  const [showWelcomeModal, setShowWelcomeModal] = useState(() => {
-    return localStorage.getItem('prayer_tracker_welcome_seen') !== 'true';
-  });
+
+  useEffect(() => {
+    isAudioMutedRef.current = isAudioMuted;
+  }, [isAudioMuted]);
+
+  useEffect(() => {
+    const isEn = settings?.language === 'en';
+    document.documentElement.dir = isEn ? 'ltr' : 'rtl';
+    document.documentElement.lang = isEn ? 'en' : 'ar';
+  }, [settings?.language]);
+
+  useEffect(() => {
+    const handleSettingsUpdated = (e) => {
+      if (e.detail) {
+        setSettings(e.detail);
+        setRefreshTrigger((prev) => prev + 1);
+      }
+    };
+    window.addEventListener('settings-updated', handleSettingsUpdated);
+    return () => window.removeEventListener('settings-updated', handleSettingsUpdated);
+  }, []);
 
   const iframeRef = useRef(null);
   const prevIframeRef = useRef(null);
@@ -59,15 +77,6 @@ export default function App() {
 
   const handleSettingsSaved = (newSettings) => {
     setSettings(newSettings);
-  };
-
-  const handleSaveWelcomeKeys = (keys) => {
-    const updated = {
-      ...settings,
-      ...keys,
-    };
-    saveSettings(updated);
-    setSettings(updated);
   };
 
   const handleRecordUpdated = () => {
@@ -89,18 +98,19 @@ export default function App() {
             if (iframeRef.current && iframeRef.current.contentWindow) {
               iframeRef.current.contentWindow.postMessage(
                 JSON.stringify({ event: 'command', func: 'unMute', args: '' }),
-                '*'
+                'https://www.youtube.com'
               );
               iframeRef.current.contentWindow.postMessage(
                 JSON.stringify({ event: 'command', func: 'setVolume', args: [100] }),
-                '*'
+                'https://www.youtube.com'
               );
             }
           }, delay);
         });
       }
     }
-    setSyncToastMsg('تمت مزامنة البث مباشر الآن ✓');
+    const isEn = settings?.language === 'en';
+    setSyncToastMsg(isEn ? 'Live stream synced' : 'تمت مزامنة البث المباشر');
     setTimeout(() => {
       setSyncToastMsg('');
     }, 2500);
@@ -113,30 +123,36 @@ export default function App() {
       clearInterval(fadeTimerRef.current);
     }
 
-    if (isAudioMuted) {
-      // Instant UI State update (0ms delay)
-      setIsAudioMuted(false);
+    const nextMuted = !isAudioMuted;
+    setIsAudioMuted(nextMuted);
+    isAudioMutedRef.current = nextMuted;
 
-      // Smooth 0.5-Second Fast Fade-In in background (10 steps * 50ms = 500ms)
+    if (!nextMuted) {
+      // Instant UI State update & Smooth Fade-In
       let vol = 0;
-      iframeRef.current.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [0] }), '*');
-      iframeRef.current.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'unMute', args: '' }), '*');
+      try {
+        iframeRef.current.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [0] }), 'https://www.youtube.com');
+        iframeRef.current.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'unMute', args: '' }), 'https://www.youtube.com');
+      } catch (e) {}
 
       fadeTimerRef.current = setInterval(() => {
+        if (isAudioMutedRef.current) {
+          clearInterval(fadeTimerRef.current);
+          return;
+        }
         vol += 10;
         if (vol >= 100) {
           vol = 100;
           clearInterval(fadeTimerRef.current);
         }
         if (iframeRef.current && iframeRef.current.contentWindow) {
-          iframeRef.current.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [vol] }), '*');
+          try {
+            iframeRef.current.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [vol] }), 'https://www.youtube.com');
+          } catch (e) {}
         }
       }, 50);
     } else {
-      // Instant UI State update (0ms delay)
-      setIsAudioMuted(true);
-
-      // Smooth 0.5-Second Fast Fade-Out in background (10 steps * 50ms = 500ms)
+      // Instant UI State update & Smooth Fade-Out
       let vol = 100;
       fadeTimerRef.current = setInterval(() => {
         vol -= 10;
@@ -144,83 +160,251 @@ export default function App() {
           vol = 0;
           clearInterval(fadeTimerRef.current);
           if (iframeRef.current && iframeRef.current.contentWindow) {
-            iframeRef.current.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [0] }), '*');
-            iframeRef.current.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'mute', args: '' }), '*');
+            try {
+              iframeRef.current.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [0] }), 'https://www.youtube.com');
+              iframeRef.current.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'mute', args: '' }), 'https://www.youtube.com');
+            } catch (e) {}
           }
         } else {
           if (iframeRef.current && iframeRef.current.contentWindow) {
-            iframeRef.current.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [vol] }), '*');
+            try {
+              iframeRef.current.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [vol] }), 'https://www.youtube.com');
+            } catch (e) {}
           }
         }
       }, 50);
     }
   };
 
-  // Keyboard Shortcuts: 'm' for Audio Toggle, 'f' for Focus Mode Toggle
+  // Keyboard Shortcuts: 'm' for Audio, 'f' for Focus Mode, 'l' for Live Sync, ArrowUp/ArrowDown for Page Navigation
   useEffect(() => {
+    const tabs = ['tracker', 'dashboard', 'chat', 'settings'];
+
     const handleKeyDown = (e) => {
       const targetTag = e.target.tagName ? e.target.tagName.toLowerCase() : '';
       if (targetTag === 'input' || targetTag === 'textarea' || e.target.isContentEditable) {
         return;
       }
 
-      const key = e.key ? e.key.toLowerCase() : '';
-      if (key === 'm' || key === 'ك') {
+      const key = e.key;
+      if (key === 'ArrowUp') {
         e.preventDefault();
-        handleToggleAudio();
-      } else if (key === 'f' || key === 'ب') {
+        if (isWallpaperFocusMode) return;
+        setActiveTab((prev) => {
+          const idx = tabs.indexOf(prev);
+          const prevIdx = idx > 0 ? idx - 1 : tabs.length - 1;
+          return tabs[prevIdx];
+        });
+      } else if (key === 'ArrowDown') {
         e.preventDefault();
-        setIsWallpaperFocusMode((prev) => !prev);
-      } else if (key === 'l' || key === 'م') {
+        if (isWallpaperFocusMode) return;
+        setActiveTab((prev) => {
+          const idx = tabs.indexOf(prev);
+          const nextIdx = idx < tabs.length - 1 ? idx + 1 : 0;
+          return tabs[nextIdx];
+        });
+      } else if (key === 'ArrowRight') {
         e.preventDefault();
-        handleSyncLiveStream();
+        const bgModes = ['makkah', 'madinah', 'custom_image'];
+        setSettings((prev) => {
+          const currentMode = prev.bgMode || 'makkah';
+          const idx = bgModes.indexOf(currentMode);
+          const nextIdx = idx < bgModes.length - 1 ? idx + 1 : 0;
+          const updated = { ...prev, bgMode: bgModes[nextIdx] };
+          saveSettings(updated);
+          return updated;
+        });
+      } else if (key === 'ArrowLeft') {
+        e.preventDefault();
+        const bgModes = ['makkah', 'madinah', 'custom_image'];
+        setSettings((prev) => {
+          const currentMode = prev.bgMode || 'makkah';
+          const idx = bgModes.indexOf(currentMode);
+          const prevIdx = idx > 0 ? idx - 1 : bgModes.length - 1;
+          const updated = { ...prev, bgMode: bgModes[prevIdx] };
+          saveSettings(updated);
+          return updated;
+        });
+      } else {
+        const lowerKey = key ? key.toLowerCase() : '';
+        if (lowerKey === 'm' || lowerKey === 'ك') {
+          e.preventDefault();
+          handleToggleAudio();
+        } else if (lowerKey === 'f' || lowerKey === 'ب') {
+          e.preventDefault();
+          setIsWallpaperFocusMode((prev) => !prev);
+        } else if (lowerKey === 'l' || lowerKey === 'م') {
+          e.preventDefault();
+          handleSyncLiveStream();
+        }
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isAudioMuted]);
+  }, [isAudioMuted, isWallpaperFocusMode]);
 
   const [currentBg, setCurrentBg] = useState(() => {
     return getDesiredBg(settings) || { type: 'video', videoId: 'm9-Umj3aL1I', key: 'makkah' };
   });
-  const [curtainOpacity, setCurtainOpacity] = useState(0);
-  const [isChangingBg, setIsChangingBg] = useState(false);
 
-  // 1. Seamless 2-phase transition using a Front Black Curtain Overlay
+  const [isBlackCurtainActive, setIsBlackCurtainActive] = useState(true); // START TRUE TO PREVENT INITIAL FLASH
+  const isPlaybackDetectedRef = useRef(false);
+  const isTransitioningRef = useRef(false); // Track transition to prevent old iframe leaks
+  const pollIntervalRef = useRef(null);
+  const fallbackTimerRef = useRef(null);
+  const isFirstMountRef = useRef(true);
+
+  // Reveal: transition the overlay from solid black back to normal semi-transparent dimming
+  const triggerReveal = (toastText = '') => {
+    if (isPlaybackDetectedRef.current) return;
+    isPlaybackDetectedRef.current = true;
+
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+
+    if (fallbackTimerRef.current) {
+      clearTimeout(fallbackTimerRef.current);
+      fallbackTimerRef.current = null;
+    }
+
+    if (toastText) {
+      setSyncToastMsg(toastText);
+      setTimeout(() => setSyncToastMsg(''), 2500);
+    }
+
+    // Smooth Audio Fade-In helper for new stream
+    if (!isAudioMutedRef.current && iframeRef.current && iframeRef.current.contentWindow) {
+      let vol = 0;
+      try {
+        iframeRef.current.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [0] }), 'https://www.youtube.com');
+        iframeRef.current.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'unMute', args: '' }), 'https://www.youtube.com');
+      } catch (e) {}
+
+      if (fadeTimerRef.current) clearInterval(fadeTimerRef.current);
+      fadeTimerRef.current = setInterval(() => {
+        if (isAudioMutedRef.current) {
+          clearInterval(fadeTimerRef.current);
+          return;
+        }
+        vol += 10;
+        if (vol >= 100) {
+          vol = 100;
+          clearInterval(fadeTimerRef.current);
+        }
+        if (iframeRef.current && iframeRef.current.contentWindow) {
+          try {
+            iframeRef.current.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [vol] }), 'https://www.youtube.com');
+          } catch (e) {}
+        }
+      }, 60);
+    }
+
+    // Force React to reliably trigger the CSS transition
+    requestAnimationFrame(() => {
+      setIsBlackCurtainActive(false);
+    });
+  };
+
+  // Setup Initial Mount Fallback Timer
   useEffect(() => {
-    const desired = getDesiredBg(settings);
-    if (!desired || desired.key === currentBg.key || isChangingBg) return;
+    if (fallbackTimerRef.current) clearTimeout(fallbackTimerRef.current);
+    fallbackTimerRef.current = setTimeout(() => {
+      triggerReveal();
+    }, 8000);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-    setIsChangingBg(true);
-    hasSyncedNewBgRef.current = false;
+  // YouTube postMessage listener
+  useEffect(() => {
+    const handleWindowMessage = (event) => {
+      try {
+        const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
+        if (!data) return;
 
-    // Wait 0.5s (500ms) before starting the Black Curtain Fade In
-    let swapTimer = null;
-    const startDelayTimer = setTimeout(() => {
-      // Phase 1: Fade IN Black Curtain over 500ms to hide screen cleanly
-      setCurtainOpacity(1);
+        // Ensure we only reveal when frames are ACTUALLY playing (currentTime > 0.1)
+        // Ignoring playerState === 1 avoids flashing the YouTube UI player right before the video starts.
+        const hasActiveTime =
+          data.info && typeof data.info.currentTime === 'number' && data.info.currentTime > 0.1;
 
-      // Phase 2: After 500ms (screen is pure black), unmount old stream and mount new stream fresh
-      swapTimer = setTimeout(() => {
-        setCurrentBg(desired);
-      }, 500);
-    }, 500);
-
-    // Fallback safety timer to fade out curtain even if iframe load is delayed
-    const fallbackTimer = setTimeout(() => {
-      setCurtainOpacity(0);
-      setIsChangingBg(false);
-    }, 5000);
-
-    return () => {
-      clearTimeout(startDelayTimer);
-      if (swapTimer) clearTimeout(swapTimer);
-      clearTimeout(fallbackTimer);
+        // CRITICAL FIX: Ignore messages from old iframe during the 500ms black-curtain transition!
+        if (hasActiveTime && !isTransitioningRef.current) {
+          const isEn = settings?.language === 'en';
+          triggerReveal(isEn ? 'Live stream synced' : 'تمت مزامنة البث المباشر');
+        }
+      } catch (e) {}
     };
+
+    window.addEventListener('message', handleWindowMessage);
+    return () => window.removeEventListener('message', handleWindowMessage);
+  }, []);
+
+  useEffect(() => {
+    if (isFirstMountRef.current) {
+      isFirstMountRef.current = false;
+      return;
+    }
+
+    const desired = getDesiredBg(settings);
+    if (!desired || desired.key === currentBg.key) return;
+
+    isPlaybackDetectedRef.current = false;
+    isTransitioningRef.current = true; // Lock out old iframe messages
+    setIsBlackCurtainActive(true);
+
+    // Audio Fade-Out for old stream if unmuted
+    if (!isAudioMutedRef.current && iframeRef.current && iframeRef.current.contentWindow) {
+      const win = iframeRef.current.contentWindow;
+      try {
+        win.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [40] }), 'https://www.youtube.com');
+      } catch (e) {}
+      setTimeout(() => {
+        try {
+          win.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [10] }), 'https://www.youtube.com');
+        } catch (e) {}
+      }, 100);
+      setTimeout(() => {
+        try {
+          win.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [0] }), 'https://www.youtube.com');
+          win.postMessage(JSON.stringify({ event: 'command', func: 'mute', args: '' }), 'https://www.youtube.com');
+        } catch (e) {}
+      }, 200);
+    }
+
+    const swapTimer = setTimeout(() => {
+      setCurrentBg(desired);
+      isTransitioningRef.current = false; // Unlock for new iframe
+    }, 300);
+
+    if (fallbackTimerRef.current) clearTimeout(fallbackTimerRef.current);
+    fallbackTimerRef.current = setTimeout(() => {
+      triggerReveal();
+    }, 8000);
+
+    return () => clearTimeout(swapTimer);
   }, [settings.bgMode, settings.activeCustomBgImage, settings.youtubeLiveUrl]);
 
-  // Preserve user audio state across background stream changes
+  // Image preload sensing (Decoded off main thread to prevent UI stutter)
+  useEffect(() => {
+    if (currentBg?.type === 'image') {
+      isPlaybackDetectedRef.current = false;
+      const img = new Image();
+      img.src = currentBg.imageUrl;
+      if (img.decode) {
+        img.decode()
+          .then(() => {
+            requestAnimationFrame(() => triggerReveal());
+          })
+          .catch(() => triggerReveal());
+      } else {
+        img.onload = () => triggerReveal();
+        img.onerror = () => triggerReveal();
+      }
+    }
+  }, [currentBg]);
+
   useEffect(() => {
     if (fadeTimerRef.current) {
       clearInterval(fadeTimerRef.current);
@@ -254,49 +438,77 @@ export default function App() {
             title="YouTube Live Background Stream"
             allow="autoplay; encrypted-media"
             onLoad={() => {
-              // Register YouTube API listening command
               if (iframeRef.current && iframeRef.current.contentWindow) {
                 try {
-                  iframeRef.current.contentWindow.postMessage(JSON.stringify({ event: 'listening' }), '*');
+                  iframeRef.current.contentWindow.postMessage(JSON.stringify({ event: 'listening' }), 'https://www.youtube.com');
                 } catch (e) {}
               }
 
-              // Restore unmuted audio state if user had audio open
-              if (!isAudioMuted && iframeRef.current && iframeRef.current.contentWindow) {
-                const applyAudio = () => {
-                  if (iframeRef.current && iframeRef.current.contentWindow) {
-                    iframeRef.current.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'unMute', args: '' }), '*');
-                    iframeRef.current.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [100] }), '*');
-                  }
+              if (!isAudioMutedRef.current && iframeRef.current && iframeRef.current.contentWindow) {
+                const applyGradualFadeIn = () => {
+                  if (isAudioMutedRef.current || !iframeRef.current || !iframeRef.current.contentWindow) return;
+                  let vol = 0;
+                  try {
+                    iframeRef.current.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [0] }), 'https://www.youtube.com');
+                    iframeRef.current.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'unMute', args: '' }), 'https://www.youtube.com');
+                  } catch (e) {}
+
+                  if (fadeTimerRef.current) clearInterval(fadeTimerRef.current);
+                  fadeTimerRef.current = setInterval(() => {
+                    if (isAudioMutedRef.current) {
+                      clearInterval(fadeTimerRef.current);
+                      return;
+                    }
+                    vol += 10;
+                    if (vol >= 100) {
+                      vol = 100;
+                      clearInterval(fadeTimerRef.current);
+                    }
+                    if (iframeRef.current && iframeRef.current.contentWindow) {
+                      try {
+                        iframeRef.current.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [vol] }), 'https://www.youtube.com');
+                      } catch (e) {}
+                    }
+                  }, 60);
                 };
-                applyAudio();
-                setTimeout(applyAudio, 400);
-                setTimeout(applyAudio, 1000);
+                setTimeout(applyGradualFadeIn, 1200); // Gradual smooth audio fade-in once ready
               }
 
-              // Phase 3: Allow YouTube player GPU decoder 1.4s of playing frames behind curtain, then smoothly fade out curtain (1.5s)!
-              if (!hasSyncedNewBgRef.current) {
-                hasSyncedNewBgRef.current = true;
-                setSyncToastMsg('تمت مزامنة البث مباشر الآن ✓');
-                setTimeout(() => {
-                  setSyncToastMsg('');
-                }, 2500);
+              if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+              let attempts = 0;
+              pollIntervalRef.current = setInterval(() => {
+                attempts++;
+                if (isPlaybackDetectedRef.current || attempts > 25) {
+                  clearInterval(pollIntervalRef.current);
+                  pollIntervalRef.current = null;
+                  if (!isPlaybackDetectedRef.current) {
+                    triggerReveal();
+                  }
+                  return;
+                }
 
-                setTimeout(() => {
-                  setCurtainOpacity(0); // Ultra-smooth 1.5s Fade Out of Black Curtain!
-                  setIsChangingBg(false);
-                }, 1400);
-              }
+                if (iframeRef.current && iframeRef.current.contentWindow) {
+                  try {
+                    iframeRef.current.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'playVideo', args: '' }), 'https://www.youtube.com');
+                    iframeRef.current.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'getPlayerState', args: '' }), 'https://www.youtube.com');
+                  } catch (e) {}
+                }
+              }, 300);
             }}
             style={{
-              width: '100vw',
-              height: '100vh',
-              pointerEvents: 'none',
-              transform: 'scale(1.35) translateZ(0)',
-              WebkitTransform: 'scale(1.35) translateZ(0)',
+              position: 'absolute',
+              top: '50%',
+              left: '50%',
+              width: 'max(100vw, 177.78vh)',
+              height: 'max(100vh, 56.25vw)',
+              transform: 'translate(-50%, -50%) scale(1.18) translateZ(0)',
+              WebkitTransform: 'translate(-50%, -50%) scale(1.18) translateZ(0)',
               backfaceVisibility: 'hidden',
               WebkitBackfaceVisibility: 'hidden',
+              pointerEvents: 'none',
               border: 'none',
+              filter: isWallpaperFocusMode ? 'none' : 'blur(20px)',
+              transition: 'filter 0.3s ease',
             }}
           />
         </div>
@@ -311,6 +523,8 @@ export default function App() {
           style={{
             ...layerStyle,
             backgroundImage: `url('${bgObj.imageUrl}')`,
+            filter: isWallpaperFocusMode ? 'none' : 'blur(20px)',
+            transition: 'filter 0.3s ease',
           }}
         />
       );
@@ -360,29 +574,25 @@ export default function App() {
       {/* Background Layer: Current background loaded fresh */}
       {renderBgLayer(currentBg, -4)}
 
-      {/* Front Black Curtain Layer: Fades in to hide old stream, then fades out smoothly (1.5s) AFTER YouTube video is playing! */}
+      {/* Unified Overlay Layer: dims background normally, becomes solid black curtain during transitions */}
       <div
+        className={`custom-site-bg-overlay ${isBlackCurtainActive ? 'black-curtain-active' : ''}`}
         style={{
-          position: 'fixed',
-          inset: 0,
-          zIndex: -3,
-          backgroundColor: '#090a0f',
-          pointerEvents: 'none',
-          willChange: 'opacity',
-          transform: 'translateZ(0)',
-          WebkitTransform: 'translateZ(0)',
-          transition: 'opacity 1.5s cubic-bezier(0.25, 1, 0.5, 1)',
-          opacity: curtainOpacity,
+          opacity: isWallpaperFocusMode && !isBlackCurtainActive ? 0 : undefined,
         }}
       />
 
-      {/* Overlay to dim background for readability */}
-      <div
-        className="custom-site-bg-overlay"
-        style={{
-          opacity: isWallpaperFocusMode ? 0 : 1,
-          transition: 'opacity 0.3s ease',
-        }}
+      {/* Floating Dock Navbar */}
+      <Header
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        settings={settings}
+        onToggleFocusMode={() => setIsWallpaperFocusMode((prev) => !prev)}
+        isLiveVideo={currentBg?.type === 'video'}
+        onSyncLive={handleSyncLiveStream}
+        isAudioMuted={isAudioMuted}
+        onToggleAudio={handleToggleAudio}
+        isWallpaperFocusMode={isWallpaperFocusMode}
       />
 
       {/* Main App Container - Fades out completely in Focus Mode */}
@@ -394,14 +604,6 @@ export default function App() {
           transition: 'opacity 0.25s ease',
         }}
       >
-        <Header
-          activeTab={activeTab}
-          setActiveTab={setActiveTab}
-          settings={settings}
-          onToggleFocusMode={() => setIsWallpaperFocusMode(true)}
-          onOpenWelcomeModal={() => setShowWelcomeModal(true)}
-        />
-
         <main>
           {activeTab === 'tracker' && (
             <PrayerTrackerView
@@ -413,13 +615,14 @@ export default function App() {
           )}
 
           {activeTab === 'dashboard' && (
-            <DashboardView key={refreshTrigger} />
+            <DashboardView key={refreshTrigger} settings={settings} />
           )}
 
           {activeTab === 'chat' && (
             <ChatView
               settings={settings}
               onNavigateToSettings={() => setActiveTab('settings')}
+              onSettingsSaved={handleSettingsSaved}
             />
           )}
 
@@ -430,69 +633,6 @@ export default function App() {
           )}
         </main>
       </div>
-
-      {/* Fixed Bottom Left Live Stream Controls Badge when Live Video is Active */}
-      {currentBg?.type === 'video' && !isWallpaperFocusMode && (
-        <div
-          style={{
-            position: 'fixed',
-            bottom: '16px',
-            left: '16px',
-            zIndex: 900,
-            display: 'flex',
-            gap: '8px',
-            alignItems: 'center',
-          }}
-        >
-          <button
-            type="button"
-            className="btn-secondary"
-            onClick={handleSyncLiveStream}
-            style={{
-              padding: '6px 14px',
-              fontSize: '0.8rem',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '6px',
-              backgroundColor: 'rgba(0, 0, 0, 0.75)',
-              backdropFilter: 'blur(12px)',
-              WebkitBackdropFilter: 'blur(12px)',
-              borderColor: 'rgba(16, 185, 129, 0.4)',
-              color: 'var(--text-primary)',
-              borderRadius: 'var(--radius-pill)',
-            }}
-            id="badge-sync-live-btn"
-            title="المزامنة الفورية مع البث المباشر للتأكد من عدم التأخير"
-          >
-            <span className="pulse-dot" style={{ width: '7px', height: '7px', backgroundColor: 'var(--status-on-time)' }}></span>
-            <RefreshCw size={13} style={{ color: 'var(--status-on-time)' }} />
-            <span>مباشر الآن</span>
-          </button>
-
-          <button
-            type="button"
-            className="btn-secondary"
-            onClick={handleToggleAudio}
-            style={{
-              padding: '6px 14px',
-              fontSize: '0.8rem',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '6px',
-              backgroundColor: 'rgba(0, 0, 0, 0.75)',
-              backdropFilter: 'blur(12px)',
-              WebkitBackdropFilter: 'blur(12px)',
-              borderColor: isAudioMuted ? 'rgba(255, 255, 255, 0.15)' : 'var(--status-on-time)',
-              color: isAudioMuted ? 'var(--text-secondary)' : 'var(--status-on-time)',
-              borderRadius: 'var(--radius-pill)',
-            }}
-            id="badge-stream-audio-btn"
-          >
-            {isAudioMuted ? <VolumeX size={14} /> : <Volume2 size={14} />}
-            <span>{isAudioMuted ? 'تشغيل الصوت' : 'كتم الصوت'}</span>
-          </button>
-        </div>
-      )}
 
       {/* Floating Control Bar in Focus Mode */}
       {isWallpaperFocusMode && (
@@ -524,21 +664,21 @@ export default function App() {
                 className="btn-secondary"
                 onClick={handleSyncLiveStream}
                 style={{
-                  padding: '7px 16px',
-                  fontSize: '0.84rem',
+                  padding: '8px 18px',
+                  fontSize: '0.86rem',
                   display: 'inline-flex',
                   alignItems: 'center',
-                  gap: '6px',
+                  justifyContent: 'center',
+                  gap: '8px',
+                  lineHeight: '1',
                   whiteSpace: 'nowrap',
-                  borderColor: 'rgba(16, 185, 129, 0.4)',
-                  color: 'var(--text-primary)',
                 }}
                 id="focus-sync-live-btn"
-                title="المزامنة الفورية مع نقطة البث المباشر الفعالية"
+                title={settings?.language === 'en' ? 'Instant Re-sync live stream to present moment' : 'المزامنة الفورية مع نقطة البث المباشر الفعالية'}
               >
                 <span className="pulse-dot" style={{ width: '7px', height: '7px', backgroundColor: 'var(--status-on-time)' }}></span>
-                <RefreshCw size={14} style={{ color: 'var(--status-on-time)' }} />
-                <span>مباشر الآن</span>
+                <RefreshCw size={15} style={{ color: 'var(--status-on-time)', flexShrink: 0 }} />
+                <span>{settings?.language === 'en' ? 'Live Now' : 'مباشر الآن'}</span>
               </button>
 
               <button
@@ -546,19 +686,20 @@ export default function App() {
                 className="btn-secondary"
                 onClick={handleToggleAudio}
                 style={{
-                  padding: '7px 16px',
-                  fontSize: '0.84rem',
+                  padding: '8px 18px',
+                  fontSize: '0.86rem',
                   display: 'inline-flex',
                   alignItems: 'center',
-                  gap: '6px',
+                  justifyContent: 'center',
+                  gap: '8px',
+                  lineHeight: '1',
                   whiteSpace: 'nowrap',
-                  borderColor: isAudioMuted ? 'var(--border-subtle)' : 'var(--status-on-time)',
                   color: isAudioMuted ? 'var(--text-secondary)' : 'var(--status-on-time)',
                 }}
                 id="focus-stream-audio-btn"
               >
-                {isAudioMuted ? <VolumeX size={15} /> : <Volume2 size={15} />}
-                <span>{isAudioMuted ? 'تشغيل الصوت (تدرج 0.5 ثانية)' : 'كتم الصوت'}</span>
+                {isAudioMuted ? <VolumeX size={16} style={{ flexShrink: 0 }} /> : <Volume2 size={16} style={{ flexShrink: 0 }} />}
+                <span>{isAudioMuted ? (settings?.language === 'en' ? 'Unmute Audio' : 'تشغيل الصوت') : (settings?.language === 'en' ? 'Mute Audio' : 'كتم الصوت')}</span>
               </button>
             </>
           )}
@@ -567,27 +708,22 @@ export default function App() {
             className="btn-secondary"
             onClick={() => setIsWallpaperFocusMode(false)}
             style={{
-              padding: '7px 18px',
-              fontSize: '0.84rem',
+              padding: '8px 20px',
+              fontSize: '0.86rem',
               display: 'inline-flex',
               alignItems: 'center',
-              gap: '6px',
+              justifyContent: 'center',
+              gap: '8px',
+              lineHeight: '1',
               whiteSpace: 'nowrap',
             }}
             id="exit-focus-mode-btn"
           >
-            <EyeOff size={15} />
-            <span>إغلاق العرض والعودة</span>
+            <EyeOff size={16} style={{ flexShrink: 0 }} />
+            <span>{settings?.language === 'en' ? 'Exit Focus Mode' : 'إغلاق العرض والعودة'}</span>
           </button>
         </div>
       )}
-
-      <WelcomeModal
-        isOpen={showWelcomeModal}
-        onClose={() => setShowWelcomeModal(false)}
-        onSaveKeys={handleSaveWelcomeKeys}
-        currentSettings={settings}
-      />
     </>
   );
 }
