@@ -1,5 +1,6 @@
 import muneerSystemPromptRaw from '../../muneer.md?raw';
-import { formatAppContextForPrompt } from './appContext';
+import { formatAppContextForPrompt } from './appContext.js';
+import { logError } from './errorLogger.js';
 
 // Directly use muneer.md content as the fixed System Prompt
 const FIXED_SYSTEM_PROMPT_MUNEER = muneerSystemPromptRaw;
@@ -201,19 +202,31 @@ export async function sendGeminiChatMessage(
         } else if (seg.type === 'file' && seg.file) {
           const f = seg.file;
           const isImage =
+            Boolean(f.isImage) ||
             (f.type && f.type.startsWith('image/')) ||
             (typeof f.content === 'string' && f.content.startsWith('data:image/'));
 
-          if (isImage && typeof f.content === 'string' && f.content.includes(',')) {
-            const [header, base64Data] = f.content.split(',');
-            const mimeMatch = header.match(/data:([^;]+);base64/);
-            const mimeType = mimeMatch ? mimeMatch[1] : f.type || 'image/png';
-            parts.push({
-              inline_data: {
-                mime_type: mimeType,
-                data: base64Data,
-              },
-            });
+          if (isImage) {
+            let mimeType = f.type || 'image/jpeg';
+            let base64Data = '';
+            if (typeof f.content === 'string') {
+              if (f.content.includes(',')) {
+                const [header, data] = f.content.split(',');
+                const mimeMatch = header.match(/data:([^;]+);base64/);
+                if (mimeMatch) mimeType = mimeMatch[1];
+                base64Data = data;
+              } else {
+                base64Data = f.content;
+              }
+            }
+            if (base64Data && base64Data.trim()) {
+              parts.push({
+                inlineData: {
+                  mimeType: mimeType.trim(),
+                  data: base64Data.trim(),
+                },
+              });
+            }
           } else {
             parts.push({
               text: `[مستند مرفق: ${f.name} (${f.size})]:\n${f.content}`,
@@ -228,19 +241,31 @@ export async function sendGeminiChatMessage(
       if (Array.isArray(files) && files.length > 0) {
         files.forEach((f) => {
           const isImage =
+            Boolean(f.isImage) ||
             (f.type && f.type.startsWith('image/')) ||
             (typeof f.content === 'string' && f.content.startsWith('data:image/'));
 
-          if (isImage && typeof f.content === 'string' && f.content.includes(',')) {
-            const [header, base64Data] = f.content.split(',');
-            const mimeMatch = header.match(/data:([^;]+);base64/);
-            const mimeType = mimeMatch ? mimeMatch[1] : f.type || 'image/png';
-            parts.push({
-              inline_data: {
-                mime_type: mimeType,
-                data: base64Data,
-              },
-            });
+          if (isImage) {
+            let mimeType = f.type || 'image/jpeg';
+            let base64Data = '';
+            if (typeof f.content === 'string') {
+              if (f.content.includes(',')) {
+                const [header, data] = f.content.split(',');
+                const mimeMatch = header.match(/data:([^;]+);base64/);
+                if (mimeMatch) mimeType = mimeMatch[1];
+                base64Data = data;
+              } else {
+                base64Data = f.content;
+              }
+            }
+            if (base64Data && base64Data.trim()) {
+              parts.push({
+                inlineData: {
+                  mimeType: mimeType.trim(),
+                  data: base64Data.trim(),
+                },
+              });
+            }
           } else {
             parts.push({
               text: `[مستند مرفق: ${f.name} (${f.size})]:\n${f.content}`,
@@ -405,6 +430,7 @@ export async function sendGeminiChatMessage(
 
       const endTime = performance.now();
       const durationSeconds = ((endTime - startTime) / 1000).toFixed(2);
+      logError(err, 'GeminiApi.Fetch');
       return {
         success: false,
         error: `فشل الاتصال بـ Gemini API: ${err.message}`,
@@ -415,64 +441,13 @@ export async function sendGeminiChatMessage(
 
   const endTime = performance.now();
   const durationSeconds = ((endTime - startTime) / 1000).toFixed(2);
+  const cascadeError = new Error(`Gemini API Quota/Exhaustion error across all models: ${lastErrorMsg}`);
+  logError(cascadeError, 'GeminiApi.CascadeExhausted');
   return {
     success: false,
     error: `تم استنفاذ كوتا جميع النماذج المدعومة في هذا المفتاح (${activeModelsList.join(', ')}). التفاصيل: ${lastErrorMsg}`,
     durationSeconds,
   };
-}
-
-// AI Web Search & Scraped Content Parsing via Gemini AI Model with Fallback Cascade
-export async function parsePrayerTimesWithGeminiAI(geminiApiKey, rawText, city, country, targetDateStr = '') {
-  if (!geminiApiKey || !geminiApiKey.trim() || !rawText || !rawText.trim()) return null;
-
-  const datePromptText = targetDateStr ? `specifically for target date ${targetDateStr}` : 'for today';
-
-  const systemInstruction = `You are a precise AI prayer times JSON parser. Extract exact prayer times for ${city}, ${country} ${datePromptText} from the provided raw web content or table. Return ONLY a valid, raw JSON object (no markdown formatting, no backticks, no extra text) in 24-hour HH:MM format:
-{
-  "Fajr": "HH:MM",
-  "Sunrise": "HH:MM",
-  "Dhuhr": "HH:MM",
-  "Asr": "HH:MM",
-  "Maghrib": "HH:MM",
-  "Isha": "HH:MM"
-}`;
-
-  const dynamicModels = await fetchAvailableGeminiModels(geminiApiKey);
-
-  for (const model of dynamicModels) {
-    try {
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            system_instruction: { parts: [{ text: systemInstruction }] },
-            contents: [{ role: 'user', parts: [{ text: rawText.slice(0, 4500) }] }],
-            generationConfig: {
-              temperature: 0.1,
-              maxOutputTokens: 200,
-              responseMimeType: 'application/json',
-            },
-          }),
-        }
-      );
-
-      if (response.ok) {
-        const data = await response.json();
-        const rawReply = data.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (rawReply) {
-          const cleanJsonStr = rawReply.replace(/```json/g, '').replace(/```/g, '').trim();
-          const jsonTimes = JSON.parse(cleanJsonStr);
-          return jsonTimes;
-        }
-      }
-    } catch (err) {
-      console.warn(`Gemini AI parsing with model ${model} failed, trying fallback:`, err);
-    }
-  }
-  return null;
 }
 
 /**

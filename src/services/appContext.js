@@ -5,8 +5,10 @@ import {
   getNaflRecords,
   calculateNightTimes,
   toWesternDigits,
+  getCityTodayDateStr,
   NAFL_PRAYERS,
-} from './storage';
+  OBLIGATORY_PRAYER_IDS,
+} from './storage.js';
 
 /**
  * Builds a structured, real-time snapshot of the user's application state,
@@ -20,19 +22,16 @@ export function getLiveAppContext() {
   const naflRecords = getNaflRecords();
 
   const now = new Date();
-  const todayStr = now.toISOString().split('T')[0];
+  const todayStr = getCityTodayDateStr(settings.timezone || prayerTimes?.timezone);
   const todayRecords = records.filter((r) => r.date === todayStr);
   const todayNafl = naflRecords.filter((r) => r.date === todayStr);
 
-  const nightTimes = calculateNightTimes(prayerTimes.Maghrib, prayerTimes.Fajr);
+  const nightTimes = calculateNightTimes(prayerTimes?.Maghrib, prayerTimes?.Fajr);
 
-  const prayerStatusMap = {
-    Fajr: 'لم تُسجل بعد',
-    Dhuhr: 'لم تُسجل بعد',
-    Asr: 'لم تُسجل بعد',
-    Maghrib: 'لم تُسجل بعد',
-    Isha: 'لم تُسجل بعد',
-  };
+  const prayerStatusMap = {};
+  OBLIGATORY_PRAYER_IDS.forEach((id) => {
+    prayerStatusMap[id] = 'لم تُسجل بعد';
+  });
 
   todayRecords.forEach((r) => {
     const pId = r.prayer_name || r.prayer_id;
@@ -68,14 +67,14 @@ export function getLiveAppContext() {
       timezone: settings.timezone || 'التوقيت المحلي',
     },
     today_prayer_times: {
-      Fajr: prayerTimes.Fajr || 'غير متوفر',
-      Sunrise: prayerTimes.Sunrise || 'غير متوفر',
-      Dhuhr: prayerTimes.Dhuhr || 'غير متوفر',
-      Asr: prayerTimes.Asr || 'غير متوفر',
-      Maghrib: prayerTimes.Maghrib || 'غير متوفر',
-      Isha: prayerTimes.Isha || 'غير متوفر',
-      Midnight_Half_Night: nightTimes.midnight12,
-      Last_Third_Night: nightTimes.lastThird12,
+      Fajr: (prayerTimes && prayerTimes.Fajr) || 'غير متوفر',
+      Sunrise: (prayerTimes && prayerTimes.Sunrise) || 'غير متوفر',
+      Dhuhr: (prayerTimes && prayerTimes.Dhuhr) || 'غير متوفر',
+      Asr: (prayerTimes && prayerTimes.Asr) || 'غير متوفر',
+      Maghrib: (prayerTimes && prayerTimes.Maghrib) || 'غير متوفر',
+      Isha: (prayerTimes && prayerTimes.Isha) || 'غير متوفر',
+      Midnight_Half_Night: nightTimes ? nightTimes.midnight12 : 'غير متوفر',
+      Last_Third_Night: nightTimes ? nightTimes.lastThird12 : 'غير متوفر',
     },
     today_prayer_status: prayerStatusMap,
     today_completed_nafl:
@@ -89,14 +88,9 @@ export function getLiveAppContext() {
       bgModeLabel:
         settings.bgMode === 'madinah'
           ? 'بث المسجد النبوي الشريف (المدينة المنورة)'
-          : settings.bgMode === 'youtube'
-          ? 'بث يوتيوب مخصص'
           : settings.bgMode === 'custom_image'
-          ? 'صورة مخصصة'
-          : settings.bgMode === 'off'
-          ? 'معطلة (داكن)'
+          ? 'صورة مخصصة من الجهاز'
           : 'بث الحرم المكي المباشر (مكة المكرمة)',
-      youtubeLiveUrl: settings.youtubeLiveUrl || '',
     },
     overall_statistics: {
       total_days_tracked: recordedDates.size,

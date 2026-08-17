@@ -1,41 +1,33 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import {
-  BarChart3,
   TrendingUp,
   CheckCircle,
   Clock,
   AlertTriangle,
   XCircle,
   Flame,
-  Moon,
-  Sparkles,
 } from 'lucide-react';
 import {
   Chart as ChartJS,
   CategoryScale,
   LinearScale,
-  BarElement,
   PointElement,
   LineElement,
   Title,
   Tooltip,
   Legend,
 } from 'chart.js';
-import { Line, Bar } from 'react-chartjs-2';
+import { Line } from 'react-chartjs-2';
 import {
   getRecords,
   computeSummaryStats,
-  PRAYER_NAMES,
-  getPrayerTimesCache,
-  calculateNightTimes,
-  toWesternDigits,
+  APP_EVENTS,
 } from '../services/storage';
-import { getTranslation } from '../services/i18n';
+import { DATA_STATUS, getRecordsStatus } from '../services/dataReadiness';
 
 ChartJS.register(
   CategoryScale,
   LinearScale,
-  BarElement,
   PointElement,
   LineElement,
   Title,
@@ -43,30 +35,21 @@ ChartJS.register(
   Legend
 );
 
-export default function DashboardView({ settings }) {
-  const lang = settings?.language || 'ar';
+export default function DashboardView({ settings, language }) {
+  const lang = language || settings?.language || 'ar';
   const isEn = lang === 'en';
-  const t = (k, fb) => getTranslation(lang, k, fb);
 
-  const [timeframe, setTimeframe] = useState('month');
-  const [chartType, setChartType] = useState('line');
-  const [hoveredDay, setHoveredDay] = useState(null);
+  const [timeframe, setTimeframe] = useState('week'); // 'week' | 'month' | 'all'
   const [records, setRecords] = useState(() => getRecords());
-  const [prayerTimes, setPrayerTimes] = useState(() => getPrayerTimesCache());
 
   useEffect(() => {
     const handleRecordsUpdate = (e) => {
       setRecords(e.detail || getRecords());
     };
-    const handleTimesUpdate = (e) => {
-      setPrayerTimes(e.detail || getPrayerTimesCache());
-    };
-    window.addEventListener('records-updated', handleRecordsUpdate);
-    window.addEventListener('prayer-times-updated', handleTimesUpdate);
+    window.addEventListener(APP_EVENTS.RECORDS_UPDATED, handleRecordsUpdate);
     window.addEventListener('storage', handleRecordsUpdate);
     return () => {
-      window.removeEventListener('records-updated', handleRecordsUpdate);
-      window.removeEventListener('prayer-times-updated', handleTimesUpdate);
+      window.removeEventListener(APP_EVENTS.RECORDS_UPDATED, handleRecordsUpdate);
       window.removeEventListener('storage', handleRecordsUpdate);
     };
   }, []);
@@ -81,65 +64,9 @@ export default function DashboardView({ settings }) {
   }, [records, timeframe]);
 
   const stats = useMemo(() => computeSummaryStats(filteredRecords), [filteredRecords]);
+  const recordsStatus = getRecordsStatus(records);
 
-  const nightTimes = useMemo(() => {
-    return calculateNightTimes(prayerTimes?.Maghrib, prayerTimes?.Fajr);
-  }, [prayerTimes]);
 
-  // Generate 365-day Heatmap Data (52 weeks x 7 days)
-  const heatmapData = useMemo(() => {
-    const today = new Date();
-    const days = [];
-
-    const recordsByDate = {};
-    records.forEach((r) => {
-      if (!recordsByDate[r.date]) recordsByDate[r.date] = {};
-      recordsByDate[r.date][r.prayer_name] = r;
-    });
-
-    for (let i = 364; i >= 0; i--) {
-      const d = new Date(today);
-      d.setDate(d.getDate() - i);
-      const dateStr = d.toISOString().slice(0, 10);
-
-      const dayPrayers = recordsByDate[dateStr] || {};
-      let issues = 0;
-      let countOnTime = 0;
-
-      PRAYER_NAMES.forEach((p) => {
-        const pr = dayPrayers[p.id];
-        if (pr) {
-          if (pr.status === 'late' || pr.status === 'qada' || pr.status === 'missed') {
-            issues++;
-          } else if (pr.status === 'on_time') {
-            countOnTime++;
-          }
-        }
-      });
-
-      let level = 0;
-      if (Object.keys(dayPrayers).length === 0) {
-        level = 0;
-      } else if (issues === 0 && countOnTime === 5) {
-        level = 4; // Perfect on-time day!
-      } else if (issues === 0) {
-        level = 3;
-      } else if (issues <= 2) {
-        level = 2;
-      } else {
-        level = 1;
-      }
-
-      days.push({
-        date: dateStr,
-        level,
-        countOnTime,
-        issues,
-      });
-    }
-
-    return days;
-  }, [records]);
 
   // Generate Chart Data (Line/Bar)
   const chartData = useMemo(() => {
@@ -186,8 +113,8 @@ export default function DashboardView({ settings }) {
         {
           label: isEn ? 'On Time' : 'في الوقت',
           data: onTimeCounts,
-          borderColor: '#10b981',
-          backgroundColor: '#10b981',
+          borderColor: '#ffffff',
+          backgroundColor: '#ffffff',
           tension: 0.35,
           borderWidth: 2,
           pointRadius: 3,
@@ -263,7 +190,7 @@ export default function DashboardView({ settings }) {
         {/* Header: Title + Timeframe Filter Pills */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '16px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <div style={{ padding: '8px', backgroundColor: 'rgba(16, 185, 129, 0.12)', border: '1px solid rgba(16, 185, 129, 0.25)', borderRadius: 'var(--radius-sm)', color: 'var(--status-on-time)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ padding: '8px', backgroundColor: 'rgba(255, 255, 255, 0.12)', border: '1px solid rgba(255, 255, 255, 0.25)', borderRadius: 'var(--radius-sm)', color: 'var(--status-on-time)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <TrendingUp size={20} />
             </div>
             <div>
@@ -300,6 +227,25 @@ export default function DashboardView({ settings }) {
             </button>
           </div>
         </div>
+
+        {recordsStatus === DATA_STATUS.UNAVAILABLE && (
+          <div
+            style={{
+              padding: '16px 20px',
+              marginBottom: '20px',
+              backgroundColor: 'rgba(255, 255, 255, 0.03)',
+              border: '1px solid var(--border-subtle)',
+              borderRadius: 'var(--radius-md)',
+              textAlign: 'center',
+              fontSize: '0.88rem',
+              color: 'var(--text-muted)',
+            }}
+          >
+            {isEn
+              ? 'No prayer records recorded yet. Start recording your daily prayers from the Tracker to view your analytics.'
+              : 'لا توجد سجلات صلاة مسجلة بعد. ابدأ بتسجيل صلواتك اليومية من شاشة التتبع لعرض تحليلات ومخططات الأداء بدقة.'}
+          </div>
+        )}
 
         {/* Integrated Metrics Sub-Grid (Compact Minimalist) */}
         <div

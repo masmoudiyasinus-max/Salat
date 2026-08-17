@@ -4,51 +4,134 @@ import Header from './components/Header';
 import PrayerTrackerView from './components/PrayerTrackerView';
 import DashboardView from './components/DashboardView';
 import ChatView from './components/ChatView';
+import BookReaderView from './components/BookReaderView';
 import SettingsView from './components/SettingsView';
-import { getSettings, saveSettings, getPrayerTimesCache } from './services/storage';
+import { getSettings, saveSettings, getPrayerTimesCache, APP_EVENTS } from './services/storage';
 import { requestNotificationsPermission, checkAndNotifyCurrentAdhan } from './services/permissionService';
+import { logError } from './services/errorLogger.js';
+import { autoDetectAndInitializeWorldLocation } from './services/adhanCalculator.js';
 
-export function extractYouTubeId(url) {
-  if (!url) return '';
-  const trimmed = url.trim();
-  if (trimmed.length === 11 && !trimmed.includes('/') && !trimmed.includes('.')) return trimmed;
-  const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
-  const match = trimmed.match(regExp);
-  return (match && match[2].length === 11) ? match[2] : '';
+/**
+ * Proactively senses image decoding readiness in memory before lifting transition curtain.
+ */
+export function checkImageReadiness(url) {
+  return new Promise((resolve) => {
+    if (!url || typeof url !== 'string') {
+      resolve(true);
+      return;
+    }
+    const img = new Image();
+    let resolved = false;
+
+    const onDone = () => {
+      if (!resolved) {
+        resolved = true;
+        resolve(true);
+      }
+    };
+
+    img.onload = () => {
+      if (typeof img.decode === 'function') {
+        img.decode().then(onDone).catch(onDone);
+      } else {
+        onDone();
+      }
+    };
+    img.onerror = onDone;
+    img.src = url;
+
+    if (img.complete) {
+      if (typeof img.decode === 'function') {
+        img.decode().then(onDone).catch(onDone);
+      } else {
+        onDone();
+      }
+    }
+
+    // Fallback safety timeout
+    setTimeout(onDone, 1200);
+  });
+}
+
+export function getAllAvailableScenes(settings) {
+  const scenes = [
+    { mode: 'makkah', type: 'video', id: 'makkah', nameAr: 'بث مباشر للحرم المكي', nameEn: 'Makkah Live Stream' },
+    { mode: 'madinah', type: 'video', id: 'madinah', nameAr: 'بث مباشر للمسجد النبوي', nameEn: 'Madinah Live Stream' },
+  ];
+
+  if ((Array.isArray(settings?.customBgImages) && settings.customBgImages.length > 0) || settings?.activeCustomBgImage) {
+    scenes.push({
+      mode: 'custom_image',
+      type: 'image',
+      id: 'custom_image',
+      nameAr: 'صورة مخصصة من حاسوبك',
+      nameEn: 'Custom Device Wallpaper',
+    });
+  }
+
+  return scenes;
 }
 
 export function getDesiredBg(settings) {
   const mode = settings?.bgMode || 'makkah';
   if (mode === 'makkah') {
-    return { type: 'video', videoId: 'm9-Umj3aL1I', key: 'makkah' };
+    return {
+      type: 'video',
+      videoId: settings?.makkahVideoId || 'm9-Umj3aL1I',
+      key: 'makkah',
+    };
   }
   if (mode === 'madinah') {
-    return { type: 'video', videoId: 'Rs7St51oDDc', key: 'madinah' };
+    return {
+      type: 'video',
+      videoId: settings?.madinahVideoId || 'Rs7St51oDDc',
+      key: 'madinah',
+    };
   }
   if (mode === 'custom_image') {
-    const imgUrl = settings?.activeCustomBgImage;
-    if (imgUrl && typeof imgUrl === 'string' && imgUrl.trim() !== '') {
-      return { type: 'image', imageUrl: imgUrl.trim(), key: `img_${imgUrl.trim()}` };
-    }
-    return null;
-  }
-  if (settings?.youtubeLiveUrl) {
-    const vidId = extractYouTubeId(settings.youtubeLiveUrl);
-    if (vidId) {
-      return { type: 'video', videoId: vidId, key: `yt_${vidId}` };
+    const activeImg = settings?.activeCustomBgImage || (Array.isArray(settings?.customBgImages) && settings.customBgImages[0]) || '';
+    if (activeImg) {
+      return { type: 'image', url: activeImg, imageUrl: activeImg, key: activeImg };
     }
   }
-  return { type: 'video', videoId: 'm9-Umj3aL1I', key: 'makkah' };
+  return {
+    type: 'video',
+    videoId: 'm9-Umj3aL1I',
+    key: 'makkah',
+  };
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('tracker'); // 'tracker', 'dashboard', 'chat', 'settings'
-  const [settings, setSettings] = useState(getSettings);
+  const [activeTab, setActiveTab] = useState('tracker'); // 'tracker', 'dashboard', 'chat', 'books', 'settings'
+  const [settings, setSettings] = useState(() => getSettings());
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [isWallpaperFocusMode, setIsWallpaperFocusMode] = useState(false);
   const [isAudioMuted, setIsAudioMuted] = useState(true);
   const isAudioMutedRef = useRef(true);
   const [syncToastMsg, setSyncToastMsg] = useState('');
+
+  // Book Reader & Background Auto-Switch States
+  const [isReaderActive, setIsReaderActive] = useState(false);
+  const savedPreviousBgRef = useRef(null);
+
+  const handleStartReading = () => {
+    savedPreviousBgRef.current = settings?.bgMode || 'makkah';
+    const updated = saveSettings({ ...settings, bgMode: 'custom_image' });
+    setSettings(updated);
+  };
+
+  const handleExitReading = () => {
+    if (savedPreviousBgRef.current) {
+      const updated = saveSettings({ ...settings, bgMode: savedPreviousBgRef.current });
+      setSettings(updated);
+      savedPreviousBgRef.current = null;
+    }
+  };
+
+  // Background Media & Audio States
+  const [bgMuted, setBgMuted] = useState(true);
+  const [bgHidden, setBgHidden] = useState(false);
+  const [isIframeLoaded, setIsIframeLoaded] = useState(false);
 
   useEffect(() => {
     isAudioMutedRef.current = isAudioMuted;
@@ -67,8 +150,13 @@ export default function App() {
         setRefreshTrigger((prev) => prev + 1);
       }
     };
-    window.addEventListener('settings-updated', handleSettingsUpdated);
-    return () => window.removeEventListener('settings-updated', handleSettingsUpdated);
+    window.addEventListener(APP_EVENTS.SETTINGS_UPDATED, handleSettingsUpdated);
+    return () => window.removeEventListener(APP_EVENTS.SETTINGS_UPDATED, handleSettingsUpdated);
+  }, []);
+
+  // Automatic Zero-Click World Location & Accurate Astronomical Calculation on Boot
+  useEffect(() => {
+    autoDetectAndInitializeWorldLocation();
   }, []);
 
   // Check Notifications & Adhan Alerts on App Launch
@@ -87,10 +175,33 @@ export default function App() {
     return () => clearInterval(adhanTimer);
   }, [settings?.language]);
 
-  const iframeRef = useRef(null);
-  const prevIframeRef = useRef(null);
+  const makkahIframeRef = useRef(null);
+  const madinahIframeRef = useRef(null);
   const fadeTimerRef = useRef(null);
-  const hasSyncedNewBgRef = useRef(false);
+  const prevTabRef = useRef(activeTab);
+
+  // Automatic live stream synchronization whenever navigating between screens/tabs
+  useEffect(() => {
+    if (prevTabRef.current === activeTab) return;
+    prevTabRef.current = activeTab;
+
+    const mode = settings?.bgMode || 'makkah';
+    if (mode === 'makkah' || mode === 'madinah') {
+      const activeIframe = mode === 'madinah' ? madinahIframeRef.current : makkahIframeRef.current;
+      if (activeIframe && activeIframe.contentWindow) {
+        try {
+          activeIframe.contentWindow.postMessage(
+            JSON.stringify({ event: 'command', func: 'seekTo', args: [99999999, true] }),
+            'https://www.youtube.com'
+          );
+          activeIframe.contentWindow.postMessage(
+            JSON.stringify({ event: 'command', func: 'playVideo', args: '' }),
+            'https://www.youtube.com'
+          );
+        } catch (e) {}
+      }
+    }
+  }, [activeTab, settings?.bgMode]);
 
   const handleSettingsSaved = (newSettings) => {
     setSettings(newSettings);
@@ -102,22 +213,22 @@ export default function App() {
 
   const handleSyncLiveStream = () => {
     const wasUnmuted = !isAudioMuted;
+    const mode = settings?.bgMode || 'makkah';
+    const activeIframe = mode === 'madinah' ? madinahIframeRef.current : makkahIframeRef.current;
 
-    if (iframeRef.current) {
-      // Force YouTube player to snap to the absolute latest live edge by refreshing its source
-      const currentSrc = iframeRef.current.src;
-      iframeRef.current.src = currentSrc;
+    if (activeIframe) {
+      const currentSrc = activeIframe.src;
+      activeIframe.src = currentSrc;
 
-      // Fortify: If audio was open before sync, restore unmuted audio state smoothly after iframe reloads
       if (wasUnmuted) {
         [600, 1200, 2000].forEach((delay) => {
           setTimeout(() => {
-            if (iframeRef.current && iframeRef.current.contentWindow) {
-              iframeRef.current.contentWindow.postMessage(
+            if (activeIframe && activeIframe.contentWindow) {
+              activeIframe.contentWindow.postMessage(
                 JSON.stringify({ event: 'command', func: 'unMute', args: '' }),
                 'https://www.youtube.com'
               );
-              iframeRef.current.contentWindow.postMessage(
+              activeIframe.contentWindow.postMessage(
                 JSON.stringify({ event: 'command', func: 'setVolume', args: [100] }),
                 'https://www.youtube.com'
               );
@@ -134,7 +245,9 @@ export default function App() {
   };
 
   const handleToggleAudio = () => {
-    if (!iframeRef.current || !iframeRef.current.contentWindow) return;
+    const mode = settings?.bgMode || 'makkah';
+    const activeIframe = mode === 'madinah' ? madinahIframeRef.current : makkahIframeRef.current;
+    if (!activeIframe || !activeIframe.contentWindow) return;
 
     if (fadeTimerRef.current) {
       clearInterval(fadeTimerRef.current);
@@ -148,8 +261,8 @@ export default function App() {
       // Instant UI State update & Smooth Fade-In
       let vol = 0;
       try {
-        iframeRef.current.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [0] }), 'https://www.youtube.com');
-        iframeRef.current.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'unMute', args: '' }), 'https://www.youtube.com');
+        activeIframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [0] }), 'https://www.youtube.com');
+        activeIframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'unMute', args: '' }), 'https://www.youtube.com');
       } catch (e) {}
 
       fadeTimerRef.current = setInterval(() => {
@@ -162,9 +275,9 @@ export default function App() {
           vol = 100;
           clearInterval(fadeTimerRef.current);
         }
-        if (iframeRef.current && iframeRef.current.contentWindow) {
+        if (activeIframe && activeIframe.contentWindow) {
           try {
-            iframeRef.current.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [vol] }), 'https://www.youtube.com');
+            activeIframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [vol] }), 'https://www.youtube.com');
           } catch (e) {}
         }
       }, 50);
@@ -176,16 +289,16 @@ export default function App() {
         if (vol <= 0) {
           vol = 0;
           clearInterval(fadeTimerRef.current);
-          if (iframeRef.current && iframeRef.current.contentWindow) {
+          if (activeIframe && activeIframe.contentWindow) {
             try {
-              iframeRef.current.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [0] }), 'https://www.youtube.com');
-              iframeRef.current.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'mute', args: '' }), 'https://www.youtube.com');
+              activeIframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [0] }), 'https://www.youtube.com');
+              activeIframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'mute', args: '' }), 'https://www.youtube.com');
             } catch (e) {}
           }
         } else {
-          if (iframeRef.current && iframeRef.current.contentWindow) {
+          if (activeIframe && activeIframe.contentWindow) {
             try {
-              iframeRef.current.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [vol] }), 'https://www.youtube.com');
+              activeIframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [vol] }), 'https://www.youtube.com');
             } catch (e) {}
           }
         }
@@ -193,18 +306,48 @@ export default function App() {
     }
   };
 
-  // Keyboard Shortcuts: 'm' for Audio, 'f' for Focus Mode, 'l' for Live Sync, ArrowUp/ArrowDown for Page Navigation
+  const handleNavigateBg = (direction = 1) => {
+    const currentSettings = getSettings();
+    const scenes = getAllAvailableScenes(currentSettings);
+    if (!scenes || scenes.length === 0) return;
+
+    const currentMode = currentSettings.bgMode || 'makkah';
+    let currentIdx = scenes.findIndex((s) => s.mode === currentMode);
+    if (currentIdx === -1) currentIdx = 0;
+
+    const nextIdx = (currentIdx + direction + scenes.length) % scenes.length;
+    const nextScene = scenes[nextIdx];
+
+    const updated = {
+      ...currentSettings,
+      bgMode: nextScene.mode,
+    };
+
+    saveSettings(updated);
+    setSettings(updated);
+
+    const isEn = updated.language === 'en';
+    setSyncToastMsg(isEn ? nextScene.nameEn : nextScene.nameAr);
+    setTimeout(() => setSyncToastMsg(''), 2200);
+  };
+
+  // Keyboard Shortcuts: 'm' for Audio, 'f' for Focus Mode, 'l' for Live Sync, ArrowUp/ArrowDown for Page Navigation, ArrowLeft/ArrowRight for Background Switching
   useEffect(() => {
-    const tabs = ['tracker', 'dashboard', 'chat', 'settings'];
+    const tabs = ['tracker', 'dashboard', 'chat', 'books', 'settings'];
 
     const handleKeyDown = (e) => {
-      const targetTag = e.target.tagName ? e.target.tagName.toLowerCase() : '';
-      if (targetTag === 'input' || targetTag === 'textarea' || e.target.isContentEditable) {
+      // If book reader is currently open in active reading mode, completely mute global shortcuts!
+      if (isReaderActive) return;
+
+      const targetTag = e.target && e.target.tagName ? e.target.tagName.toLowerCase() : '';
+      if (targetTag === 'input' || targetTag === 'textarea' || (e.target && e.target.isContentEditable)) {
         return;
       }
 
-      const key = e.key;
-      if (key === 'ArrowUp') {
+      const key = e.key || '';
+      const code = e.code || '';
+
+      if (key === 'ArrowUp' || key === 'Up' || code === 'ArrowUp') {
         e.preventDefault();
         if (isWallpaperFocusMode) return;
         setActiveTab((prev) => {
@@ -212,7 +355,7 @@ export default function App() {
           const prevIdx = idx > 0 ? idx - 1 : tabs.length - 1;
           return tabs[prevIdx];
         });
-      } else if (key === 'ArrowDown') {
+      } else if (key === 'ArrowDown' || key === 'Down' || code === 'ArrowDown') {
         e.preventDefault();
         if (isWallpaperFocusMode) return;
         setActiveTab((prev) => {
@@ -220,28 +363,12 @@ export default function App() {
           const nextIdx = idx < tabs.length - 1 ? idx + 1 : 0;
           return tabs[nextIdx];
         });
-      } else if (key === 'ArrowRight') {
+      } else if (key === 'ArrowRight' || key === 'Right' || code === 'ArrowRight') {
         e.preventDefault();
-        const bgModes = ['makkah', 'madinah', 'custom_image'];
-        setSettings((prev) => {
-          const currentMode = prev.bgMode || 'makkah';
-          const idx = bgModes.indexOf(currentMode);
-          const nextIdx = idx < bgModes.length - 1 ? idx + 1 : 0;
-          const updated = { ...prev, bgMode: bgModes[nextIdx] };
-          saveSettings(updated);
-          return updated;
-        });
-      } else if (key === 'ArrowLeft') {
+        handleNavigateBg(1);
+      } else if (key === 'ArrowLeft' || key === 'Left' || code === 'ArrowLeft') {
         e.preventDefault();
-        const bgModes = ['makkah', 'madinah', 'custom_image'];
-        setSettings((prev) => {
-          const currentMode = prev.bgMode || 'makkah';
-          const idx = bgModes.indexOf(currentMode);
-          const prevIdx = idx > 0 ? idx - 1 : bgModes.length - 1;
-          const updated = { ...prev, bgMode: bgModes[prevIdx] };
-          saveSettings(updated);
-          return updated;
-        });
+        handleNavigateBg(-1);
       } else {
         const lowerKey = key ? key.toLowerCase() : '';
         if (lowerKey === 'm' || lowerKey === 'ك') {
@@ -257,311 +384,152 @@ export default function App() {
       }
     };
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isAudioMuted, isWallpaperFocusMode]);
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
+  }, [isAudioMuted, isWallpaperFocusMode, isReaderActive]);
 
-  const [currentBg, setCurrentBg] = useState(() => {
-    return getDesiredBg(settings) || { type: 'video', videoId: 'm9-Umj3aL1I', key: 'makkah' };
-  });
+  // Synchronously compute current background directly from settings for 100% instant reactivity
+  const currentBg = getDesiredBg(settings) || { type: 'video', videoId: 'm9-Umj3aL1I', key: 'makkah' };
+  const currentBgKey = currentBg.key || settings?.bgMode || 'makkah';
+  const targetIsImage = currentBg.type === 'image' || settings?.bgMode === 'custom_image';
+  const targetImageUrl = targetIsImage
+    ? (currentBg.url || settings?.activeCustomBgImage || (Array.isArray(settings?.customBgImages) && settings.customBgImages[0]) || '')
+    : '';
 
-  const [isBlackCurtainActive, setIsBlackCurtainActive] = useState(true); // START TRUE TO PREVENT INITIAL FLASH
-  const isPlaybackDetectedRef = useRef(false);
-  const isTransitioningRef = useRef(false); // Track transition to prevent old iframe leaks
-  const pollIntervalRef = useRef(null);
-  const fallbackTimerRef = useRef(null);
-  const isFirstMountRef = useRef(true);
+  // Displayed stage states (Only swapped at exactly 280ms when the screen is 100% solid dark behind the curtain)
+  const [displayedMode, setDisplayedMode] = useState(targetIsImage ? 'custom_image' : currentBgKey);
+  const [displayedImageUrl, setDisplayedImageUrl] = useState(targetImageUrl);
+  const [isCurtainActive, setIsCurtainActive] = useState(false);
+  const prevBgKeyRef = useRef(currentBgKey);
+  const prevImageUrlRef = useRef(targetImageUrl);
+  const transitionTimerRef = useRef(null);
 
-  // Reveal: transition the overlay from solid black back to normal semi-transparent dimming
-  const triggerReveal = (toastText = '') => {
-    if (isPlaybackDetectedRef.current) return;
-    isPlaybackDetectedRef.current = true;
-
-    if (pollIntervalRef.current) {
-      clearInterval(pollIntervalRef.current);
-      pollIntervalRef.current = null;
-    }
-
-    if (fallbackTimerRef.current) {
-      clearTimeout(fallbackTimerRef.current);
-      fallbackTimerRef.current = null;
-    }
-
-    if (toastText) {
-      setSyncToastMsg(toastText);
-      setTimeout(() => setSyncToastMsg(''), 2500);
-    }
-
-    // Smooth Audio Fade-In helper for new stream
-    if (!isAudioMutedRef.current && iframeRef.current && iframeRef.current.contentWindow) {
-      let vol = 0;
-      try {
-        iframeRef.current.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [0] }), 'https://www.youtube.com');
-        iframeRef.current.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'unMute', args: '' }), 'https://www.youtube.com');
-      } catch (e) {}
-
-      if (fadeTimerRef.current) clearInterval(fadeTimerRef.current);
-      fadeTimerRef.current = setInterval(() => {
-        if (isAudioMutedRef.current) {
-          clearInterval(fadeTimerRef.current);
-          return;
-        }
-        vol += 10;
-        if (vol >= 100) {
-          vol = 100;
-          clearInterval(fadeTimerRef.current);
-        }
-        if (iframeRef.current && iframeRef.current.contentWindow) {
-          try {
-            iframeRef.current.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [vol] }), 'https://www.youtube.com');
-          } catch (e) {}
-        }
-      }, 60);
-    }
-
-    // Force React to reliably trigger the CSS transition
-    requestAnimationFrame(() => {
-      setIsBlackCurtainActive(false);
-    });
-  };
-
-  // Setup Initial Mount Fallback Timer
+  // AUTOMATIC FADE & BACKGROUND READINESS SENSING CONTROLLER: Senses loading completion before lifting the curtain
   useEffect(() => {
-    if (fallbackTimerRef.current) clearTimeout(fallbackTimerRef.current);
-    fallbackTimerRef.current = setTimeout(() => {
-      triggerReveal();
-    }, 8000);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    const bgChanged = prevBgKeyRef.current !== currentBgKey || prevImageUrlRef.current !== targetImageUrl;
+    if (!bgChanged) return;
 
-  // YouTube postMessage listener
-  useEffect(() => {
-    const handleWindowMessage = (event) => {
-      try {
-        const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
-        if (!data) return;
+    prevBgKeyRef.current = currentBgKey;
+    prevImageUrlRef.current = targetImageUrl;
 
-        // Ensure we only reveal when frames are ACTUALLY playing (currentTime > 0.1)
-        // Ignoring playerState === 1 avoids flashing the YouTube UI player right before the video starts.
-        const hasActiveTime =
-          data.info && typeof data.info.currentTime === 'number' && data.info.currentTime > 0.1;
-
-        // CRITICAL FIX: Ignore messages from old iframe during the 500ms black-curtain transition!
-        if (hasActiveTime && !isTransitioningRef.current) {
-          const isEn = settings?.language === 'en';
-          triggerReveal(isEn ? 'Live stream synced' : 'تمت مزامنة البث المباشر');
-        }
-      } catch (e) {}
-    };
-
-    window.addEventListener('message', handleWindowMessage);
-    return () => window.removeEventListener('message', handleWindowMessage);
-  }, []);
-
-  useEffect(() => {
-    if (isFirstMountRef.current) {
-      isFirstMountRef.current = false;
-      return;
+    let isCancelled = false;
+    if (transitionTimerRef.current) {
+      clearTimeout(transitionTimerRef.current);
     }
 
-    const desired = getDesiredBg(settings);
-    if (!desired || desired.key === currentBg.key) return;
+    // 1. Immediately drop dark curtain (smooth 0.28s Fade-In preserved)
+    setIsCurtainActive(true);
 
-    isPlaybackDetectedRef.current = false;
-    isTransitioningRef.current = true; // Lock out old iframe messages
-    setIsBlackCurtainActive(true);
-
-    // Audio Fade-Out for old stream if unmuted
-    if (!isAudioMutedRef.current && iframeRef.current && iframeRef.current.contentWindow) {
-      const win = iframeRef.current.contentWindow;
-      try {
-        win.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [40] }), 'https://www.youtube.com');
-      } catch (e) {}
-      setTimeout(() => {
+    // 2. Trigger instant live seek on target stream if video mode
+    if (!targetIsImage) {
+      const targetIframe = currentBgKey === 'madinah' ? madinahIframeRef.current : makkahIframeRef.current;
+      if (targetIframe && targetIframe.contentWindow) {
         try {
-          win.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [10] }), 'https://www.youtube.com');
+          targetIframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'seekTo', args: [99999999, true] }), 'https://www.youtube.com');
+          targetIframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'playVideo', args: '' }), 'https://www.youtube.com');
         } catch (e) {}
-      }, 100);
-      setTimeout(() => {
-        try {
-          win.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [0] }), 'https://www.youtube.com');
-          win.postMessage(JSON.stringify({ event: 'command', func: 'mute', args: '' }), 'https://www.youtube.com');
-        } catch (e) {}
-      }, 200);
-    }
-
-    const swapTimer = setTimeout(() => {
-      setCurrentBg(desired);
-      isTransitioningRef.current = false; // Unlock for new iframe
-    }, 300);
-
-    if (fallbackTimerRef.current) clearTimeout(fallbackTimerRef.current);
-    fallbackTimerRef.current = setTimeout(() => {
-      triggerReveal();
-    }, 8000);
-
-    return () => clearTimeout(swapTimer);
-  }, [settings.bgMode, settings.activeCustomBgImage, settings.youtubeLiveUrl]);
-
-  // Image preload sensing (Decoded off main thread to prevent UI stutter)
-  useEffect(() => {
-    if (currentBg?.type === 'image') {
-      isPlaybackDetectedRef.current = false;
-      const img = new Image();
-      img.src = currentBg.imageUrl;
-      if (img.decode) {
-        img.decode()
-          .then(() => {
-            requestAnimationFrame(() => triggerReveal());
-          })
-          .catch(() => triggerReveal());
-      } else {
-        img.onload = () => triggerReveal();
-        img.onerror = () => triggerReveal();
       }
     }
-  }, [currentBg]);
 
-  useEffect(() => {
-    if (fadeTimerRef.current) {
-      clearInterval(fadeTimerRef.current);
+    // 3. Audio switch handling behind the curtain
+    if (!isAudioMutedRef.current) {
+      if (targetIsImage) {
+        // Mute both live video streams when viewing a custom image
+        [makkahIframeRef.current, madinahIframeRef.current].forEach((iframe) => {
+          if (iframe && iframe.contentWindow) {
+            try {
+              iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [0] }), 'https://www.youtube.com');
+              iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'mute', args: '' }), 'https://www.youtube.com');
+            } catch (e) {}
+          }
+        });
+      } else {
+        const prevIframe = currentBgKey === 'madinah' ? makkahIframeRef.current : madinahIframeRef.current;
+        if (prevIframe && prevIframe.contentWindow) {
+          try {
+            prevIframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [0] }), 'https://www.youtube.com');
+            prevIframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'mute', args: '' }), 'https://www.youtube.com');
+          } catch (e) {}
+        }
+      }
     }
-  }, [currentBg.key]);
 
-  const renderBgLayer = (bgObj, zIndexVal) => {
-    if (!bgObj) return null;
+    // 4. Background Readiness Sensor:
+    // A) Minimum curtain drop time (280ms for complete solid dark fade-in)
+    // B) Real background loading & memory decode sensor
+    const minCurtainPromise = new Promise((resolve) => setTimeout(resolve, 280));
+    const readinessPromise = targetIsImage
+      ? checkImageReadiness(targetImageUrl)
+      : new Promise((resolve) => setTimeout(resolve, 260));
 
-    const layerStyle = {
-      position: 'fixed',
-      inset: 0,
-      zIndex: zIndexVal,
-      pointerEvents: 'none',
-      overflow: 'hidden',
+    Promise.all([minCurtainPromise, readinessPromise]).then(() => {
+      if (isCancelled) return;
+
+      // Swap the active displayed stage behind the 100% solid dark curtain
+      setDisplayedMode(targetIsImage ? 'custom_image' : currentBgKey);
+      if (targetIsImage) {
+        setDisplayedImageUrl(targetImageUrl);
+      }
+
+      // If video mode, re-verify live sync & play on target stream
+      if (!targetIsImage) {
+        const targetIframe = currentBgKey === 'madinah' ? madinahIframeRef.current : makkahIframeRef.current;
+        if (targetIframe && targetIframe.contentWindow) {
+          try {
+            targetIframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'seekTo', args: [99999999, true] }), 'https://www.youtube.com');
+            targetIframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'playVideo', args: '' }), 'https://www.youtube.com');
+          } catch (e) {}
+        }
+
+        // Unmute target stream if audio was active
+        if (!isAudioMutedRef.current && targetIframe && targetIframe.contentWindow) {
+          try {
+            targetIframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'unMute', args: '' }), 'https://www.youtube.com');
+            targetIframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [100] }), 'https://www.youtube.com');
+          } catch (e) {}
+        }
+      }
+
+      // 5. Readiness sensor confirmed! Lift curtain and dissolve over 0.85s
+      transitionTimerRef.current = setTimeout(() => {
+        if (!isCancelled) {
+          setIsCurtainActive(false);
+        }
+      }, 40);
+    });
+
+    return () => {
+      isCancelled = true;
+      if (transitionTimerRef.current) {
+        clearTimeout(transitionTimerRef.current);
+      }
     };
+  }, [currentBgKey, targetImageUrl, targetIsImage]);
 
-    if (bgObj.type === 'video') {
-      return (
-        <div
-          key={bgObj.key}
-          style={{
-            ...layerStyle,
-            backgroundColor: '#0a0c12',
-          }}
-          id="youtube-live-bg-container"
-        >
-          <iframe
-            ref={iframeRef}
-            src={`https://www.youtube.com/embed/${bgObj.videoId}?autoplay=1&mute=1&controls=0&showinfo=0&rel=0&enablejsapi=1&iv_load_policy=3&modestbranding=1&playsinline=1`}
-            title="YouTube Live Background Stream"
-            allow="autoplay; encrypted-media"
-            onLoad={() => {
-              if (iframeRef.current && iframeRef.current.contentWindow) {
-                try {
-                  iframeRef.current.contentWindow.postMessage(JSON.stringify({ event: 'listening' }), 'https://www.youtube.com');
-                } catch (e) {}
-              }
+  const originParam = (typeof window !== 'undefined' && window.location.protocol.startsWith('http'))
+    ? `&origin=${encodeURIComponent(window.location.origin)}`
+    : '';
 
-              if (!isAudioMutedRef.current && iframeRef.current && iframeRef.current.contentWindow) {
-                const applyGradualFadeIn = () => {
-                  if (isAudioMutedRef.current || !iframeRef.current || !iframeRef.current.contentWindow) return;
-                  let vol = 0;
-                  try {
-                    iframeRef.current.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [0] }), 'https://www.youtube.com');
-                    iframeRef.current.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'unMute', args: '' }), 'https://www.youtube.com');
-                  } catch (e) {}
-
-                  if (fadeTimerRef.current) clearInterval(fadeTimerRef.current);
-                  fadeTimerRef.current = setInterval(() => {
-                    if (isAudioMutedRef.current) {
-                      clearInterval(fadeTimerRef.current);
-                      return;
-                    }
-                    vol += 10;
-                    if (vol >= 100) {
-                      vol = 100;
-                      clearInterval(fadeTimerRef.current);
-                    }
-                    if (iframeRef.current && iframeRef.current.contentWindow) {
-                      try {
-                        iframeRef.current.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [vol] }), 'https://www.youtube.com');
-                      } catch (e) {}
-                    }
-                  }, 60);
-                };
-                setTimeout(applyGradualFadeIn, 1200); // Gradual smooth audio fade-in once ready
-              }
-
-              if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-              let attempts = 0;
-              pollIntervalRef.current = setInterval(() => {
-                attempts++;
-                if (isPlaybackDetectedRef.current || attempts > 25) {
-                  clearInterval(pollIntervalRef.current);
-                  pollIntervalRef.current = null;
-                  if (!isPlaybackDetectedRef.current) {
-                    triggerReveal();
-                  }
-                  return;
-                }
-
-                if (iframeRef.current && iframeRef.current.contentWindow) {
-                  try {
-                    iframeRef.current.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'playVideo', args: '' }), 'https://www.youtube.com');
-                    iframeRef.current.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'getPlayerState', args: '' }), 'https://www.youtube.com');
-                  } catch (e) {}
-                }
-              }, 300);
-            }}
-            style={{
-              position: 'absolute',
-              top: '50%',
-              left: '50%',
-              width: 'max(100vw, 177.78vh)',
-              height: 'max(100vh, 56.25vw)',
-              transform: 'translate(-50%, -50%) scale(1.18) translateZ(0)',
-              WebkitTransform: 'translate(-50%, -50%) scale(1.18) translateZ(0)',
-              backfaceVisibility: 'hidden',
-              WebkitBackfaceVisibility: 'hidden',
-              pointerEvents: 'none',
-              border: 'none',
-              filter: isWallpaperFocusMode ? 'none' : 'blur(20px)',
-              transition: 'filter 0.3s ease',
-            }}
-          />
-        </div>
-      );
-    }
-
-    if (bgObj.type === 'image') {
-      return (
-        <div
-          key={bgObj.key}
-          className="custom-site-bg"
-          style={{
-            ...layerStyle,
-            backgroundImage: `url('${bgObj.imageUrl}')`,
-            filter: isWallpaperFocusMode ? 'none' : 'blur(20px)',
-            transition: 'filter 0.3s ease',
-          }}
-        />
-      );
-    }
-
-    return null;
+  const iframeCommonStyle = {
+    position: 'absolute',
+    top: '50%',
+    left: '50%',
+    width: 'max(100vw, 177.78vh)',
+    height: 'max(100vh, 56.25vw)',
+    transform: 'translate(-50%, -50%) scale(1.18) translateZ(0)',
+    WebkitTransform: 'translate(-50%, -50%) scale(1.18) translateZ(0)',
+    backfaceVisibility: 'hidden',
+    WebkitBackfaceVisibility: 'hidden',
+    pointerEvents: 'none',
+    border: 'none',
+    filter: isWallpaperFocusMode ? 'none' : 'blur(20px)',
+    transition: 'filter 0.3s ease',
   };
 
   return (
     <>
-      {/* Solid Dark Background Base Layer */}
-      <div
-        style={{
-          position: 'fixed',
-          inset: 0,
-          zIndex: -6,
-          backgroundColor: '#090a0f',
-          pointerEvents: 'none',
-        }}
-      />
+      {/* Layer -5: Solid Dark Ground Base */}
+      <div className="bg-ground-base" />
 
       {/* Sync Toast Notification */}
       {syncToastMsg && (
@@ -572,8 +540,9 @@ export default function App() {
             left: '50%',
             transform: 'translateX(-50%)',
             zIndex: 2000,
-            backgroundColor: 'rgba(16, 185, 129, 0.95)',
-            color: '#000',
+            backgroundColor: '#ffffff',
+            color: '#000000',
+            border: '1px solid rgba(255, 255, 255, 0.4)',
             fontWeight: '700',
             fontSize: '0.86rem',
             padding: '8px 20px',
@@ -588,14 +557,85 @@ export default function App() {
         </div>
       )}
 
-      {/* Background Layer: Current background loaded fresh */}
-      {renderBgLayer(currentBg, -4)}
-
-      {/* Unified Overlay Layer: dims background normally, becomes solid black curtain during transitions */}
+      {/* Layer -4: Dual Persistent Streams & Custom Image Stage */}
+      {/* Makkah Live Stream */}
       <div
-        className={`custom-site-bg-overlay ${isBlackCurtainActive ? 'black-curtain-active' : ''}`}
+        key="makkah_layer"
         style={{
-          opacity: isWallpaperFocusMode && !isBlackCurtainActive ? 0 : undefined,
+          position: 'fixed',
+          inset: 0,
+          zIndex: -4,
+          pointerEvents: 'none',
+          overflow: 'hidden',
+          backgroundColor: '#0a0c12',
+          opacity: displayedMode === 'makkah' ? 1 : 0,
+          visibility: displayedMode === 'makkah' ? 'visible' : 'hidden',
+          transition: 'opacity 0.85s cubic-bezier(0.16, 1, 0.3, 1)',
+        }}
+      >
+        <iframe
+          ref={makkahIframeRef}
+          src={`https://www.youtube.com/embed/${settings?.makkahVideoId || 'm9-Umj3aL1I'}?autoplay=1&mute=1&controls=0&showinfo=0&rel=0&enablejsapi=1&iv_load_policy=3&modestbranding=1&playsinline=1${originParam}`}
+          title="Makkah Live Background Stream"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+          style={iframeCommonStyle}
+        />
+      </div>
+
+      {/* Madinah Live Stream */}
+      <div
+        key="madinah_layer"
+        style={{
+          position: 'fixed',
+          inset: 0,
+          zIndex: -4,
+          pointerEvents: 'none',
+          overflow: 'hidden',
+          backgroundColor: '#0a0c12',
+          opacity: displayedMode === 'madinah' ? 1 : 0,
+          visibility: displayedMode === 'madinah' ? 'visible' : 'hidden',
+          transition: 'opacity 0.85s cubic-bezier(0.16, 1, 0.3, 1)',
+        }}
+      >
+        <iframe
+          ref={madinahIframeRef}
+          src={`https://www.youtube.com/embed/${settings?.madinahVideoId || 'Rs7St51oDDc'}?autoplay=1&mute=1&controls=0&showinfo=0&rel=0&enablejsapi=1&iv_load_policy=3&modestbranding=1&playsinline=1${originParam}`}
+          title="Madinah Live Background Stream"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+          style={iframeCommonStyle}
+        />
+      </div>
+
+      {/* Custom Image Layer */}
+      {displayedImageUrl && (
+        <div
+          key="custom_image_layer"
+          className="custom-site-bg"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: -4,
+            pointerEvents: 'none',
+            overflow: 'hidden',
+            backgroundImage: `url('${displayedImageUrl}')`,
+            opacity: displayedMode === 'custom_image' ? 1 : 0,
+            visibility: displayedMode === 'custom_image' ? 'visible' : 'hidden',
+            filter: isWallpaperFocusMode ? 'none' : 'blur(20px)',
+            transition: 'opacity 0.85s cubic-bezier(0.16, 1, 0.3, 1), filter 0.3s ease',
+          }}
+        />
+      )}
+
+      {/* Layer -3: Dedicated Scene Transition Curtain (Automatic fade on ANY background change) */}
+      <div
+        className={`bg-transition-curtain ${isCurtainActive ? 'curtain-active' : ''}`}
+      />
+
+      {/* Layer -2: Glassmorphism Dimmer Overlay (Dims background behind frosted cards) */}
+      <div
+        className="bg-frosted-dimmer"
+        style={{
+          opacity: isWallpaperFocusMode ? 0 : 1,
         }}
       />
 
@@ -610,6 +650,7 @@ export default function App() {
         isAudioMuted={isAudioMuted}
         onToggleAudio={handleToggleAudio}
         isWallpaperFocusMode={isWallpaperFocusMode}
+        onToggleBg={() => handleNavigateBg(1)}
       />
 
       {/* Main App Container - Fades out completely in Focus Mode */}
@@ -622,33 +663,46 @@ export default function App() {
         }}
       >
         <main>
-          {activeTab === 'tracker' && (
-            <PrayerTrackerView
-              settings={settings}
-              onRecordUpdated={handleRecordUpdated}
-              isAudioMuted={isAudioMuted}
-              onToggleAudio={handleToggleAudio}
-              onNavigateToSettings={() => setActiveTab('settings')}
-            />
-          )}
+          <div key={activeTab} className="view-transition-wrapper">
+            {activeTab === 'tracker' && (
+              <PrayerTrackerView
+                settings={settings}
+                onRecordUpdated={handleRecordUpdated}
+                isAudioMuted={isAudioMuted}
+                onToggleAudio={handleToggleAudio}
+                onNavigateToSettings={() => setActiveTab('settings')}
+              />
+            )}
 
-          {activeTab === 'dashboard' && (
-            <DashboardView key={refreshTrigger} settings={settings} />
-          )}
+            {activeTab === 'dashboard' && (
+              <DashboardView key={refreshTrigger} settings={settings} />
+            )}
 
-          {activeTab === 'chat' && (
-            <ChatView
-              settings={settings}
-              onNavigateToSettings={() => setActiveTab('settings')}
-              onSettingsSaved={handleSettingsSaved}
-            />
-          )}
+            {activeTab === 'chat' && (
+              <ChatView
+                settings={settings}
+                onNavigateToSettings={() => setActiveTab('settings')}
+                onSettingsSaved={handleSettingsSaved}
+              />
+            )}
 
-          {activeTab === 'settings' && (
-            <SettingsView
-              onSettingsSaved={handleSettingsSaved}
-            />
-          )}
+            {activeTab === 'books' && (
+              <BookReaderView
+                key="book-reader-view"
+                settings={settings}
+                onStartReading={handleStartReading}
+                onExitReading={handleExitReading}
+                isReaderActive={isReaderActive}
+                setIsReaderActive={setIsReaderActive}
+              />
+            )}
+
+            {activeTab === 'settings' && (
+              <SettingsView
+                onSettingsSaved={handleSettingsSaved}
+              />
+            )}
+          </div>
         </main>
       </div>
 

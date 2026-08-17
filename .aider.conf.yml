@@ -1,0 +1,7 @@
+# .aider.conf.yml
+architect: true              # تفعيل نمط المعماري: التفكير والتخطيط أولاً ثم التنفيذ
+auto-commits: true           # إنشاء Git Commit تلقائي منظم لكل ميزة ناجحة
+auto-lint: true              # تشغيل فاحص الكود تلقائياً بعد كل تعديل
+lint-cmd: "npm run build"    # أمر التحقق الإلزامي لمنع كسر المشروع
+model: claude-3-7-sonnet     # النموذج الأساسي المعتمد للتخطيط
+editor-model: claude-3-5-haiku # نموذج خفيف مخصص للتنفيذ الدقيق

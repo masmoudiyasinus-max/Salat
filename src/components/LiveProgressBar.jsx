@@ -6,7 +6,16 @@ export default function LiveProgressBar({ currentDateObj, nextDateObj, timezone,
   const [timeStage, setTimeStage] = useState('on_time_15'); // 'on_time_15' | 'mid_yellow' | 'ending_red'
 
   useEffect(() => {
-    if (!currentDateObj || !nextDateObj) return;
+    if (
+      !currentDateObj ||
+      !nextDateObj ||
+      !(currentDateObj instanceof Date) ||
+      !(nextDateObj instanceof Date) ||
+      isNaN(currentDateObj.getTime()) ||
+      isNaN(nextDateObj.getTime())
+    ) {
+      return;
+    }
 
     const update = () => {
       if (document.hidden) return;
@@ -49,17 +58,17 @@ export default function LiveProgressBar({ currentDateObj, nextDateObj, timezone,
     };
   }, [currentDateObj, nextDateObj, timezone]);
 
-  let barBackground = '#10b981';
-  let barGlow = '0 0 8px rgba(16, 185, 129, 0.4)';
+  let barBackground = '#ffffff';
+  let barGlow = '0 0 10px rgba(255, 255, 255, 0.5)';
 
   if (isActiveCompleted) {
     // White ending with a short gradient transition into #ffb8fb pink
     barBackground = 'linear-gradient(270deg, #ffffff 0%, #ffffff 80%, #ffb8fb 100%)';
     barGlow = '0 0 8px rgba(255, 184, 251, 0.5)';
   } else if (timeStage === 'on_time_15') {
-    // First 15 minutes of Adhan: Green
-    barBackground = '#10b981';
-    barGlow = '0 0 8px rgba(16, 185, 129, 0.4)';
+    // First 15 minutes of Adhan: Pure White
+    barBackground = '#ffffff';
+    barGlow = '0 0 10px rgba(255, 255, 255, 0.5)';
   } else if (timeStage === 'ending_red') {
     // Last 15 minutes before next Adhan: Red
     barBackground = '#ef4444';
@@ -68,6 +77,17 @@ export default function LiveProgressBar({ currentDateObj, nextDateObj, timezone,
     // After 15 minutes until last 15 minutes: Yellow
     barBackground = '#f59e0b';
     barGlow = '0 0 8px rgba(245, 158, 11, 0.4)';
+  }
+
+  if (
+    !currentDateObj ||
+    !nextDateObj ||
+    !(currentDateObj instanceof Date) ||
+    !(nextDateObj instanceof Date) ||
+    isNaN(currentDateObj.getTime()) ||
+    isNaN(nextDateObj.getTime())
+  ) {
+    return null;
   }
 
   return (

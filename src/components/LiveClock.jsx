@@ -1,76 +1,82 @@
 import React, { useState, useEffect } from 'react';
-import { getCityNowDate, toWesternDigits } from '../services/storage';
+import { toWesternDigits } from '../services/storage';
+import { resolveTimezoneForLocation } from '../services/adhanCalculator';
 
-export default function LiveClock({ timezone, timeFormat = '12', language = 'ar' }) {
-  const [nowTime, setNowTime] = useState(() => {
-    const d = getCityNowDate(timezone);
-    return isNaN(d.getTime()) ? new Date() : d;
-  });
+export default function LiveClock({ timezone, city, country, timeFormat = '12', language = 'ar' }) {
+  const [now, setNow] = useState(() => new Date());
+
+  const effectiveTz = (timezone && typeof timezone === 'string' && timezone.includes('/'))
+    ? timezone.trim()
+    : resolveTimezoneForLocation(city, country);
 
   useEffect(() => {
-    const updateClock = () => {
-      if (document.hidden) return;
-      const cityNow = getCityNowDate(timezone);
-      setNowTime(isNaN(cityNow.getTime()) ? new Date() : cityNow);
+    const update = () => {
+      if (!document.hidden) {
+        setNow(new Date());
+      }
     };
-
-    const handleVisibilityChange = () => {
-      if (!document.hidden) updateClock();
+    const timer = setInterval(update, 1000);
+    const handleVis = () => {
+      if (!document.hidden) update();
     };
-
-    const timer = setInterval(updateClock, 1000);
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-
+    document.addEventListener('visibilitychange', handleVis);
     return () => {
       clearInterval(timer);
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      document.removeEventListener('visibilitychange', handleVis);
     };
-  }, [timezone]);
+  }, []);
 
   const isEn = language === 'en';
   const is12Hour = (timeFormat || '12') === '12';
+  const tzOpt = effectiveTz ? { timeZone: effectiveTz } : {};
 
   const liveClockTime = isEn
-    ? nowTime.toLocaleTimeString('en-US', {
+    ? now.toLocaleTimeString('en-US', {
         hour: '2-digit',
         minute: '2-digit',
         hour12: is12Hour,
+        ...tzOpt,
       })
     : toWesternDigits(
-        nowTime.toLocaleTimeString('ar-EG-u-nu-latn', {
+        now.toLocaleTimeString('ar-EG-u-nu-latn', {
           hour: '2-digit',
           minute: '2-digit',
           hour12: is12Hour,
+          ...tzOpt,
         })
       );
 
   const gregorianDateFormatted = isEn
-    ? nowTime.toLocaleDateString('en-US', {
+    ? now.toLocaleDateString('en-US', {
         weekday: 'long',
         day: 'numeric',
         month: 'long',
         year: 'numeric',
+        ...tzOpt,
       })
     : toWesternDigits(
-        nowTime.toLocaleDateString('ar-EG-u-nu-latn', {
+        now.toLocaleDateString('ar-EG-u-nu-latn', {
           weekday: 'long',
           day: 'numeric',
           month: 'long',
           year: 'numeric',
+          ...tzOpt,
         })
       );
 
   const hijriDateFormatted = isEn
-    ? `${nowTime.toLocaleDateString('en-US-u-ca-islamic-umalqura', {
+    ? `${now.toLocaleDateString('en-US-u-ca-islamic-umalqura', {
         day: 'numeric',
         month: 'long',
         year: 'numeric',
+        ...tzOpt,
       })} AH`
     : `${toWesternDigits(
-        nowTime.toLocaleDateString('ar-SA-u-ca-islamic-umalqura-nu-latn', {
+        now.toLocaleDateString('ar-SA-u-ca-islamic-umalqura-nu-latn', {
           day: 'numeric',
           month: 'long',
           year: 'numeric',
+          ...tzOpt,
         })
       )} هـ`;
 

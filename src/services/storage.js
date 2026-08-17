@@ -1,4 +1,42 @@
 import Papa from 'papaparse';
+import {
+  OBLIGATORY_PRAYER_IDS,
+  PRAYER_NAMES,
+  NAFL_PRAYERS,
+  PRAYER_STATUSES,
+  PRAYER_STATUS_LABELS,
+  APP_EVENTS,
+} from './prayerConstants.js';
+import {
+  toWesternDigits,
+  cleanTimeString,
+  timeToMinutes,
+  getCityNowDate,
+  getCityTodayDateStr,
+  formatTimeDisplay,
+  formatTimeDisplay12,
+  calculateDelay,
+  applyPrayerOffsets,
+} from './timeUtils.js';
+
+// Re-export constants and time utilities for unified centralized access
+export {
+  OBLIGATORY_PRAYER_IDS,
+  PRAYER_NAMES,
+  NAFL_PRAYERS,
+  PRAYER_STATUSES,
+  PRAYER_STATUS_LABELS,
+  APP_EVENTS,
+  toWesternDigits,
+  cleanTimeString,
+  timeToMinutes,
+  getCityNowDate,
+  getCityTodayDateStr,
+  formatTimeDisplay,
+  formatTimeDisplay12,
+  calculateDelay,
+  applyPrayerOffsets,
+};
 
 export const KEYS = {
   RECORDS: 'prayer_tracker_records',
@@ -8,69 +46,34 @@ export const KEYS = {
   ACTIVE_SESSION_ID: 'prayer_tracker_active_session_id',
   NAFL_RECORDS: 'prayer_tracker_nafl_records',
   RE_TOGGLE_HISTORY: 'prayer_tracker_re_toggle_history',
-  REJECTED_BG_PREFIX: 'prayer_tracker_rejected_bg_',
-  ACTIVE_BG_PREFIX: 'prayer_tracker_active_bg_',
+  ERROR_LOGS: 'prayer_tracker_error_logs_v1',
+  SOURCE_SCHEDULE: 'prayer_tracker_source_schedule_v1',
 };
-
-export function toWesternDigits(str) {
-  if (str === null || str === undefined) return '';
-  const s = String(str);
-  return s.replace(/[٠-٩]/g, (d) => '٠١٢٣٤٥٦٧٨٩'.indexOf(d));
-}
-
-export function getCityNowDate(timezoneStr) {
-  const now = new Date();
-  if (!timezoneStr || typeof timezoneStr !== 'string' || timezoneStr.trim() === '') return now;
-  try {
-    const cityTimeString = now.toLocaleString('en-US', { timeZone: timezoneStr });
-    const parsed = new Date(cityTimeString);
-    if (isNaN(parsed.getTime())) {
-      return now;
-    }
-    return parsed;
-  } catch (e) {
-    return now;
-  }
-}
-
-export function formatTimeDisplay(timeStr, timeFormat = '12', lang = '') {
-  if (!timeStr || typeof timeStr !== 'string') return '';
-  const clean = timeStr.trim();
-  if (!clean.includes(':')) return clean;
-
-  if (timeFormat === '24') {
-    return toWesternDigits(clean);
-  }
-
-  const [hStr, mStr] = clean.split(':');
-  let h = parseInt(hStr, 10);
-  const m = mStr.substring(0, 2);
-
-  if (isNaN(h)) return toWesternDigits(clean);
-
-  const activeLang = lang || (typeof window !== 'undefined' ? (getSettings()?.language || 'ar') : 'ar');
-  const isEn = activeLang === 'en';
-  const period = h >= 12 ? (isEn ? 'PM' : 'م') : (isEn ? 'AM' : 'ص');
-  h = h % 12;
-  if (h === 0) h = 12;
-
-  const formattedH = String(h).padStart(2, '0');
-  return toWesternDigits(`${formattedH}:${m} ${period}`);
-}
 
 const DEFAULT_SETTINGS = {
   geminiApiKey: '',
   tavilyApiKey: '',
-  prayerSourceUrl: '',
   gracePeriodMinutes: 15,
   city: '',
   country: '',
   customBgImages: [],
   activeCustomBgImage: '',
-  youtubeLiveUrl: 'https://www.youtube-nocookie.com/embed/m9-Umj3aL1I',
   bgMode: 'makkah',
+  makkahVideoId: 'm9-Umj3aL1I',
+  madinahVideoId: 'Rs7St51oDDc',
   timeFormat: '12',
   language: 'ar',
+  calculationMethod: 'auto',
+  asrMadhab: 'shafi',
+  highLatitudeRule: 'middleOfTheNight',
+  prayerOffsets: {
+    Fajr: 0,
+    Sunrise: 0,
+    Dhuhr: 0,
+    Asr: 0,
+    Maghrib: 0,
+    Isha: 0,
+  },
 };
 
 const DEFAULT_PRAYER_TIMES = {
@@ -82,44 +85,20 @@ const DEFAULT_PRAYER_TIMES = {
   Isha: '',
 };
 
-export const PRAYER_NAMES = [
-  { id: 'Fajr', nameAr: 'الفجر' },
-  { id: 'Dhuhr', nameAr: 'الظهر' },
-  { id: 'Asr', nameAr: 'العصر' },
-  { id: 'Maghrib', nameAr: 'المغرب' },
-  { id: 'Isha', nameAr: 'العشاء' },
-];
-
-export const NAFL_PRAYERS = [
-  { id: 'Sunnah_Fajr', nameAr: 'سنة الفجر', rakaat: '2 ركعة قبلية', timing: 'قبل صلاة الفجر' },
-  { id: 'Duha', nameAr: 'صلاة الضحى', rakaat: '2 - 8 ركعات', timing: 'من الشروق+15د إلى قبل الظهر' },
-  { id: 'Sunnah_Dhuhr_Pre', nameAr: 'سنة الظهر القبلية', rakaat: '4 ركعات', timing: 'بعد دخول وقت الظهر وقبل الفريضة' },
-  { id: 'Sunnah_Dhuhr_Post', nameAr: 'سنة الظهر البعدية', rakaat: '2 ركعة بعدية', timing: 'بعد صلاة الظهر' },
-  { id: 'Sunnah_Maghrib', nameAr: 'سنة المغرب البعدية', rakaat: '2 ركعة بعدية', timing: 'بعد صلاة المغرب' },
-  { id: 'Sunnah_Isha', nameAr: 'سنة العشاء البعدية', rakaat: '2 ركعة بعدية', timing: 'بعد صلاة العشاء' },
-  { id: 'Qiyam_Layl', nameAr: 'قيام الليل', rakaat: 'مثنى مثنى', timing: 'من بعد العشاء إلى الفجر' },
-  { id: 'Witr', nameAr: 'صلاة الوتر', rakaat: '1 - 5 ركعات', timing: 'ختام صلوات الليل' },
-];
-
 export function getCurrentObligatoryPrayerId(prayerTimes, safeNow = new Date()) {
   if (!prayerTimes || !prayerTimes.Fajr || !prayerTimes.Dhuhr || !prayerTimes.Asr || !prayerTimes.Maghrib || !prayerTimes.Isha) {
-    return 'Fajr';
+    return null;
   }
-  const parseMins = (t) => {
-    if (!t || typeof t !== 'string' || !t.includes(':')) return -1;
-    const [h, m] = t.split(':').map(Number);
-    if (isNaN(h) || isNaN(m)) return -1;
-    return h * 60 + m;
-  };
+
   const currentMins = safeNow.getHours() * 60 + safeNow.getMinutes();
-  const fajrMins = parseMins(prayerTimes.Fajr);
-  const dhuhrMins = parseMins(prayerTimes.Dhuhr);
-  const asrMins = parseMins(prayerTimes.Asr);
-  const maghribMins = parseMins(prayerTimes.Maghrib);
-  const ishaMins = parseMins(prayerTimes.Isha);
+  const fajrMins = timeToMinutes(prayerTimes.Fajr);
+  const dhuhrMins = timeToMinutes(prayerTimes.Dhuhr);
+  const asrMins = timeToMinutes(prayerTimes.Asr);
+  const maghribMins = timeToMinutes(prayerTimes.Maghrib);
+  const ishaMins = timeToMinutes(prayerTimes.Isha);
 
   if (fajrMins === -1 || dhuhrMins === -1 || asrMins === -1 || maghribMins === -1 || ishaMins === -1) {
-    return 'Fajr';
+    return null;
   }
 
   if (currentMins >= fajrMins && currentMins < dhuhrMins) {
@@ -138,8 +117,15 @@ export function getCurrentObligatoryPrayerId(prayerTimes, safeNow = new Date()) 
 }
 
 export function calculateNightTimes(maghribTimeStr, fajrTimeStr) {
-  if (!maghribTimeStr || !fajrTimeStr || !maghribTimeStr.includes(':') || !fajrTimeStr.includes(':')) {
-    return { midnight: '', midnight12: '', lastThird: '', lastThird12: '', nightDurationMinutes: 0 };
+  if (
+    !maghribTimeStr ||
+    !fajrTimeStr ||
+    typeof maghribTimeStr !== 'string' ||
+    typeof fajrTimeStr !== 'string' ||
+    !maghribTimeStr.includes(':') ||
+    !fajrTimeStr.includes(':')
+  ) {
+    return null;
   }
 
   const [mH, mM] = maghribTimeStr.split(':').map(Number);
@@ -182,6 +168,86 @@ export function calculateNightTimes(maghribTimeStr, fajrTimeStr) {
   };
 }
 
+/**
+ * Asynchronously compresses an image file/Blob to target dimensions & quality using Canvas.
+ * Prevents localStorage QuotaExceededError by reducing multi-megabyte images to ~50-150KB.
+ */
+export async function compressImageFile(file, maxWidth = 1920, maxHeight = 1080, quality = 0.75) {
+  if (!file) return null;
+  return new Promise((resolve) => {
+    if (typeof window === 'undefined' || typeof document === 'undefined') {
+      resolve(null);
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        let width = img.width;
+        let height = img.height;
+
+        if (width > maxWidth || height > maxHeight) {
+          const ratio = Math.min(maxWidth / width, maxHeight / height);
+          width = Math.round(width * ratio);
+          height = Math.round(height * ratio);
+        }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve(e.target.result);
+          return;
+        }
+
+        ctx.drawImage(img, 0, 0, width, height);
+
+        let compressedDataUrl = '';
+        try {
+          compressedDataUrl = canvas.toDataURL('image/webp', quality);
+          if (!compressedDataUrl.startsWith('data:image/webp')) {
+            compressedDataUrl = canvas.toDataURL('image/jpeg', quality);
+          }
+        } catch (canvasErr) {
+          compressedDataUrl = canvas.toDataURL('image/jpeg', quality);
+        }
+
+        resolve(compressedDataUrl || e.target.result);
+      };
+      img.onerror = () => resolve(e.target.result);
+      img.src = e.target.result;
+    };
+    reader.onerror = () => resolve(null);
+    reader.readAsDataURL(file);
+  });
+}
+
+/**
+ * Centrally manages localStorage.setItem with automatic QuotaExceededError handling & recovery.
+ */
+export function safeSetLocalStorageItem(key, valueString, retryStrategy = null) {
+  if (typeof localStorage === 'undefined') return false;
+  try {
+    localStorage.setItem(key, valueString);
+    return true;
+  } catch (err) {
+    console.warn(`localStorage quota exceeded while saving "${key}". Initiating safe recovery.`, err);
+    if (typeof retryStrategy === 'function') {
+      try {
+        const recoveredValue = retryStrategy();
+        if (recoveredValue !== undefined) {
+          localStorage.setItem(key, typeof recoveredValue === 'string' ? recoveredValue : JSON.stringify(recoveredValue));
+          return true;
+        }
+      } catch (retryErr) {
+        console.error(`Quota recovery failed for "${key}":`, retryErr);
+      }
+    }
+    return false;
+  }
+}
+
 export function getNaflRecords() {
   const data = localStorage.getItem(KEYS.NAFL_RECORDS);
   if (!data) return [];
@@ -189,9 +255,9 @@ export function getNaflRecords() {
 }
 
 export function saveNaflRecords(records) {
-  localStorage.setItem(KEYS.NAFL_RECORDS, JSON.stringify(records));
+  safeSetLocalStorageItem(KEYS.NAFL_RECORDS, JSON.stringify(records));
   if (typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent('nafl-records-updated', { detail: records }));
+    window.dispatchEvent(new CustomEvent(APP_EVENTS.NAFL_RECORDS_UPDATED, { detail: records }));
   }
 }
 
@@ -223,7 +289,21 @@ export function getSettings() {
 }
 
 export function saveSettings(settings) {
-  localStorage.setItem(KEYS.SETTINGS, JSON.stringify(settings));
+  safeSetLocalStorageItem(KEYS.SETTINGS, JSON.stringify(settings), () => {
+    // If quota exceeded, trim customBgImages down to the active image only
+    const cloned = { ...settings };
+    if (Array.isArray(cloned.customBgImages) && cloned.customBgImages.length > 1) {
+      cloned.customBgImages = cloned.activeCustomBgImage ? [cloned.activeCustomBgImage] : [];
+      return cloned;
+    }
+    // If still failing, drop custom background images to preserve core user settings
+    cloned.customBgImages = [];
+    cloned.activeCustomBgImage = '';
+    return cloned;
+  });
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(APP_EVENTS.SETTINGS_UPDATED, { detail: settings }));
+  }
 }
 
 export function getPrayerTimesCache() {
@@ -237,10 +317,39 @@ export function getPrayerTimesCache() {
 }
 
 export function savePrayerTimesCache(times) {
-  localStorage.setItem(KEYS.TIMES, JSON.stringify(times));
+  safeSetLocalStorageItem(KEYS.TIMES, JSON.stringify(times));
   if (typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent('prayer-times-updated', { detail: times }));
+    window.dispatchEvent(new CustomEvent(APP_EVENTS.PRAYER_TIMES_UPDATED, { detail: times }));
   }
+}
+
+export function getSourceScheduleCache() {
+  const data = localStorage.getItem(KEYS.SOURCE_SCHEDULE);
+  if (!data) return null;
+  try {
+    const parsed = JSON.parse(data);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveSourceScheduleCache(scheduleData) {
+  if (!scheduleData || typeof scheduleData !== 'object') return;
+  safeSetLocalStorageItem(KEYS.SOURCE_SCHEDULE, JSON.stringify(scheduleData));
+}
+
+export function getTimesFromSourceSchedule(dateStr) {
+  if (!dateStr) return null;
+  const cache = getSourceScheduleCache();
+  if (cache?.schedule && cache.schedule[dateStr]) {
+    return cache.schedule[dateStr];
+  }
+  return null;
+}
+
+export function clearSourceScheduleCache() {
+  localStorage.removeItem(KEYS.SOURCE_SCHEDULE);
 }
 
 export function getRecords() {
@@ -259,9 +368,9 @@ export function getRecords() {
 }
 
 export function saveRecords(records) {
-  localStorage.setItem(KEYS.RECORDS, JSON.stringify(records));
+  safeSetLocalStorageItem(KEYS.RECORDS, JSON.stringify(records));
   if (typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent('records-updated', { detail: records }));
+    window.dispatchEvent(new CustomEvent(APP_EVENTS.RECORDS_UPDATED, { detail: records }));
   }
 }
 
@@ -317,10 +426,10 @@ export function importFullUserDataJSON(jsonString) {
   }
 
   if (typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent('records-updated', { detail: getRecords() }));
-    window.dispatchEvent(new CustomEvent('nafl-records-updated', { detail: getNaflRecords() }));
-    window.dispatchEvent(new CustomEvent('settings-updated', { detail: getSettings() }));
-    window.dispatchEvent(new CustomEvent('prayer-times-updated', { detail: getPrayerTimesCache() }));
+    window.dispatchEvent(new CustomEvent(APP_EVENTS.RECORDS_UPDATED, { detail: getRecords() }));
+    window.dispatchEvent(new CustomEvent(APP_EVENTS.NAFL_RECORDS_UPDATED, { detail: getNaflRecords() }));
+    window.dispatchEvent(new CustomEvent(APP_EVENTS.SETTINGS_UPDATED, { detail: getSettings() }));
+    window.dispatchEvent(new CustomEvent(APP_EVENTS.PRAYER_TIMES_UPDATED, { detail: getPrayerTimesCache() }));
   }
 
   return true;
@@ -341,10 +450,10 @@ export function clearEntireAppData() {
   });
 
   if (typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent('records-updated', { detail: [] }));
-    window.dispatchEvent(new CustomEvent('nafl-records-updated', { detail: [] }));
-    window.dispatchEvent(new CustomEvent('settings-updated', { detail: getSettings() }));
-    window.dispatchEvent(new CustomEvent('prayer-times-updated', { detail: getPrayerTimesCache() }));
+    window.dispatchEvent(new CustomEvent(APP_EVENTS.RECORDS_UPDATED, { detail: [] }));
+    window.dispatchEvent(new CustomEvent(APP_EVENTS.NAFL_RECORDS_UPDATED, { detail: [] }));
+    window.dispatchEvent(new CustomEvent(APP_EVENTS.SETTINGS_UPDATED, { detail: getSettings() }));
+    window.dispatchEvent(new CustomEvent(APP_EVENTS.PRAYER_TIMES_UPDATED, { detail: getPrayerTimesCache() }));
   }
 }
 
@@ -449,7 +558,7 @@ export function sanitizeChatSessions(sessions) {
                   sender: m.sender === 'user' ? 'user' : 'assistant',
                   text: textVal,
                   attachedFiles: Array.isArray(m.attachedFiles) ? m.attachedFiles : [],
-                  timestamp: m.timestamp || '12:00',
+                  timestamp: m.timestamp || new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false }),
                   usedSearch: Boolean(m.usedSearch),
                   durationSeconds: m.durationSeconds ? String(m.durationSeconds) : null,
                   isEdited: Boolean(m.isEdited),
@@ -492,21 +601,40 @@ export function getChatSessions() {
 
 export function resetChatSessions() {
   const defaultSession = createInitialChatSession();
-  localStorage.setItem(KEYS.CHAT_SESSIONS, JSON.stringify([defaultSession]));
-  localStorage.setItem(KEYS.ACTIVE_SESSION_ID, defaultSession.id);
+  safeSetLocalStorageItem(KEYS.CHAT_SESSIONS, JSON.stringify([defaultSession]));
+  safeSetLocalStorageItem(KEYS.ACTIVE_SESSION_ID, defaultSession.id);
   return [defaultSession];
 }
 
 export function saveChatSessions(sessions) {
-  localStorage.setItem(KEYS.CHAT_SESSIONS, JSON.stringify(sessions));
+  safeSetLocalStorageItem(KEYS.CHAT_SESSIONS, JSON.stringify(sessions), () => {
+    // If quota exceeded, strip heavy binary image data from older sessions
+    if (!Array.isArray(sessions)) return [createInitialChatSession()];
+    const stripped = sessions.map((sess, sIdx) => {
+      if (sIdx > 1) {
+        return {
+          ...sess,
+          messages: Array.isArray(sess.messages)
+            ? sess.messages.map((m) => ({
+                ...m,
+                attachedFiles: (m.attachedFiles || []).map((f) => ({ ...f, content: '' })),
+              }))
+            : [],
+        };
+      }
+      return sess;
+    });
+    return stripped;
+  });
 }
 
 export function getActiveSessionId() {
+  if (typeof localStorage === 'undefined') return '';
   return localStorage.getItem(KEYS.ACTIVE_SESSION_ID) || '';
 }
 
 export function saveActiveSessionId(id) {
-  localStorage.setItem(KEYS.ACTIVE_SESSION_ID, id);
+  safeSetLocalStorageItem(KEYS.ACTIVE_SESSION_ID, id);
 }
 
 export function createNewSession(customTitle = '') {
@@ -589,9 +717,6 @@ function createInitialChatSession() {
   };
 }
 
-function generateInitialDemoRecords() {
-  return [];
-}
 
 export function computeSummaryStats(records) {
   let onTime = 0;

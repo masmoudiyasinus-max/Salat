@@ -1,10 +1,8 @@
-import { getSettings, saveSettings, savePrayerTimesCache, getPrayerTimesCache, toWesternDigits } from './storage';
-import { fetchPrayerTimesFromTavily, getCalculationMethodForCountry } from './tavilyApi';
-
-function cleanTime(timeStr) {
-  if (!timeStr) return '';
-  return timeStr.split(' ')[0].trim();
-}
+import { getSettings, saveSettings, savePrayerTimesCache } from './storage.js';
+import { APP_EVENTS, PRAYER_NAMES } from './prayerConstants.js';
+import { cleanTimeString, toWesternDigits } from './timeUtils.js';
+import { logError } from './errorLogger.js';
+import { calculateOfflinePrayerTimes } from './adhanCalculator.js';
 
 // 1. Notification Permission Request
 export async function requestNotificationsPermission() {
@@ -101,43 +99,39 @@ export async function reverseGeocodeCoords(latitude, longitude) {
     console.warn('Nominatim reverse geocode error:', e);
   }
 
-  return { success: false };
+  return { city: '', country: '', success: false };
 }
 
-// 4. Fetch Astronomical Prayer Times directly via Live Coordinates
+// 4. Fetch Accurate Prayer Times by Coordinates (Client-side adhan-js Engine)
 export async function fetchPrayerTimesByCoordinates(latitude, longitude, targetDateStr = '', countryName = '') {
   try {
-    let datePath = '';
+    const settings = typeof window !== 'undefined' ? getSettings() : {};
+    let targetDateObj = new Date();
     if (targetDateStr) {
       const parts = targetDateStr.split('-');
       if (parts.length === 3) {
-        datePath = `/${parts[2]}-${parts[1]}-${parts[0]}`;
+        targetDateObj = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
       }
     }
 
-    const methodNum = getCalculationMethodForCountry(countryName);
-    const url = `https://api.aladhan.com/v1/timings${datePath}?latitude=${latitude}&longitude=${longitude}&method=${methodNum}`;
-    const res = await fetch(url);
-    if (res.ok) {
-      const json = await res.json();
-      const timings = json?.data?.timings;
-      if (timings) {
-        return {
-          success: true,
-          times: {
-            Fajr: cleanTime(timings.Fajr),
-            Sunrise: cleanTime(timings.Sunrise),
-            Dhuhr: cleanTime(timings.Dhuhr),
-            Asr: cleanTime(timings.Asr),
-            Maghrib: cleanTime(timings.Maghrib),
-            Isha: cleanTime(timings.Isha),
-          },
-          timezone: json?.data?.meta?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,
-        };
-      }
+    const offlineResult = calculateOfflinePrayerTimes(latitude, longitude, targetDateObj, {
+      calculationMethod: settings?.calculationMethod,
+      asrMadhab: settings?.asrMadhab,
+      highLatitudeRule: settings?.highLatitudeRule,
+      countryName: countryName,
+    });
+
+    if (offlineResult && offlineResult.success && offlineResult.times) {
+      return {
+        success: true,
+        times: offlineResult.times,
+        timezone: offlineResult.timezone,
+        qiblaDirection: offlineResult.qiblaDirection,
+        source: offlineResult.source,
+      };
     }
   } catch (e) {
-    console.warn('Aladhan coordinates prayer times error:', e);
+    console.warn('Coordinates prayer times error:', e);
   }
   return { success: false };
 }
@@ -153,67 +147,67 @@ export async function requestFreshLocationFromScratch(onSuccessCallback = null) 
       async (pos) => {
         const { latitude, longitude } = pos.coords;
 
-        // Perform live reverse geocoding from scratch with zero stored memory
+        // Perform live reverse geocoding
         const geoNames = await reverseGeocodeCoords(latitude, longitude);
+        const resolvedCity = (geoNames.success && geoNames.city) ? geoNames.city : `${latitude.toFixed(2)}°, ${longitude.toFixed(2)}°`;
+        const resolvedCountry = (geoNames.success && geoNames.country) ? geoNames.country : '';
 
-        if (geoNames.success && geoNames.city && geoNames.country) {
-          const currentSettings = getSettings();
-          const isEn = currentSettings?.language === 'en';
-          const updatedSettings = {
-            ...currentSettings,
-            city: geoNames.city,
-            country: geoNames.country,
-          };
-          saveSettings(updatedSettings);
+        const currentSettings = getSettings();
+        const isEn = currentSettings?.language === 'en';
+        const updatedSettings = {
+          ...currentSettings,
+          city: resolvedCity,
+          country: resolvedCountry || currentSettings.country,
+        };
+        saveSettings(updatedSettings);
 
-          if (typeof window !== 'undefined') {
-            window.dispatchEvent(new CustomEvent('settings-updated', { detail: updatedSettings }));
-          }
-
-          // Fetch exact prayer times for the fresh coordinates
-          const today = new Date();
-          const targetDateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-          const hh = String(today.getHours()).padStart(2, '0');
-          const mm = String(today.getMinutes()).padStart(2, '0');
-          const timeNow = toWesternDigits(`${hh}:${mm}`);
-
-          const timesResult = await fetchPrayerTimesByCoordinates(latitude, longitude, targetDateStr, geoNames.country);
-
-          if (timesResult && timesResult.success && timesResult.times) {
-            const mergedTimes = {
-              ...timesResult.times,
-              timezone: timesResult.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,
-              lastSyncedDate: targetDateStr,
-              lastSyncedTime: timeNow,
-              source: isEn ? 'Live Geolocation' : 'الموقع الجغرافي الحي',
-            };
-
-            savePrayerTimesCache(mergedTimes);
-            if (typeof window !== 'undefined') {
-              window.dispatchEvent(new CustomEvent('prayer-times-updated', { detail: mergedTimes }));
-            }
-          }
-
-          const resultObj = {
-            success: true,
-            city: geoNames.city,
-            country: geoNames.country,
-            latitude,
-            longitude,
-          };
-
-          if (onSuccessCallback) {
-            onSuccessCallback(resultObj);
-          }
-
-          resolve(resultObj);
-        } else {
-          resolve({ success: false, error: 'geocode_failed' });
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent(APP_EVENTS.SETTINGS_UPDATED, { detail: updatedSettings }));
         }
+
+        // Calculate exact astronomical prayer times for the fresh coordinates immediately
+        const today = new Date();
+        const targetDateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+        const hh = String(today.getHours()).padStart(2, '0');
+        const mm = String(today.getMinutes()).padStart(2, '0');
+        const timeNow = toWesternDigits(`${hh}:${mm}`);
+
+        const timesResult = await fetchPrayerTimesByCoordinates(latitude, longitude, targetDateStr, resolvedCountry);
+
+        if (timesResult && timesResult.success && timesResult.times) {
+          const mergedTimes = {
+            ...timesResult.times,
+            timezone: timesResult.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,
+            lastSyncedDate: targetDateStr,
+            lastSyncedTime: timeNow,
+            source: isEn ? 'Live GPS Astronomical Calculation' : 'حساب فلكي دقيق عبر GPS',
+          };
+
+          savePrayerTimesCache(mergedTimes);
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent(APP_EVENTS.PRAYER_TIMES_UPDATED, { detail: mergedTimes }));
+          }
+        }
+
+        const resultObj = {
+          success: true,
+          city: resolvedCity,
+          country: resolvedCountry,
+          timezone: timesResult?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,
+        };
+
+        if (onSuccessCallback) {
+          onSuccessCallback(resultObj);
+        }
+
+        resolve(resultObj);
       },
       (err) => {
         // Strict: If user denied or disabled geolocation, DO NOT fallback or force any location
         console.warn('Browser geolocation denied or disabled by user:', err.message);
+        if (err.code !== 1) {
+          logError(err, 'PermissionService.Geolocation');
+        }
         resolve({ success: false, error: err.code === 1 ? 'denied' : 'error', message: err.message });
       },
       {
@@ -235,23 +229,16 @@ export function checkAndNotifyCurrentAdhan(prayerTimes, language = 'ar') {
   const currentHHMM = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
   const isEn = language === 'en';
 
-  const prayerNamesMap = {
-    Fajr: { ar: 'الفجر', en: 'Fajr' },
-    Dhuhr: { ar: 'الظهر', en: 'Dhuhr' },
-    Asr: { ar: 'العصر', en: 'Asr' },
-    Maghrib: { ar: 'المغرب', en: 'Maghrib' },
-    Isha: { ar: 'العشاء', en: 'Isha' },
-  };
-
   const todayDateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 
-  Object.entries(prayerNamesMap).forEach(([id, nameObj]) => {
+  PRAYER_NAMES.forEach((pObj) => {
+    const id = pObj.id;
     const adhanTime = prayerTimes[id];
     if (adhanTime && adhanTime === currentHHMM) {
       const notifiedKey = `adhan_notified_${todayDateStr}_${id}_${currentHHMM}`;
       if (!sessionStorage.getItem(notifiedKey)) {
         sessionStorage.setItem(notifiedKey, 'true');
-        const pName = isEn ? nameObj.en : nameObj.ar;
+        const pName = isEn ? pObj.nameEn : pObj.nameAr;
         const title = isEn ? `Time for ${pName} Prayer` : `حان الآن موعد أذان صلاة ${pName}`;
         const body = isEn ? `Adhan for ${pName} prayer has arrived at ${adhanTime}.` : `دخول وقت صلاة ${pName}، تقبل الله منا ومنكم صالح الأعمال.`;
         sendAdhanNotification(title, body);

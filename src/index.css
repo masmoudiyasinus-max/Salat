@@ -32,6 +32,26 @@
   }
 }
 
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -16px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @keyframes wordFadeIn {
   0% {
     opacity: 0;
@@ -71,8 +91,8 @@
   --text-muted: #6b7280;
 
   /* Status Solid Colors (No Gradients) */
-  --status-on-time: #10b981;
-  --status-on-time-bg: rgba(16, 185, 129, 0.12);
+  --status-on-time: #ffffff;
+  --status-on-time-bg: rgba(255, 255, 255, 0.12);
   
   --status-late: #f59e0b;
   --status-late-bg: rgba(245, 158, 11, 0.12);
@@ -86,9 +106,9 @@
   --accent-blue: #3b82f6;
   --accent-blue-bg: rgba(59, 130, 246, 0.12);
 
-  --shadow-sm: 0 4px 12px rgba(0, 0, 0, 0.25);
-  --shadow-md: 0 10px 30px rgba(0, 0, 0, 0.35);
-  --shadow-lg: 0 20px 40px rgba(0, 0, 0, 0.5);
+  --shadow-sm: 0 4px 12px rgba(0, 0, 0, 0.10);
+  --shadow-md: 0 10px 30px rgba(0, 0, 0, 0.20);
+  --shadow-lg: 0 20px 40px rgba(0, 0, 0, 0.30);
 
   --font-main: 'NotoNastaliqUrduNumbers', 'DM Sans', 'Milan-Display-Black-Swashes';
   --font-latin: 'DM Sans';
@@ -187,24 +207,75 @@ html[dir="rtl"] button {
   animation: fadeOutBg 0.4s ease forwards;
 }
 
-/* Unified Overlay Layer: dims background normally, turns black during transitions */
-.custom-site-bg-overlay {
+/* Background Architecture: Multi-Layer Transition Pipeline */
+
+/* Layer -5: Solid Dark Ground Base */
+.bg-ground-base {
   position: fixed;
   inset: 0;
-  z-index: -1;
+  z-index: -5;
+  background-color: #07080b;
   pointer-events: none;
-  background-color: rgba(0, 0, 0, 0.45);
-  /* Smooth 1.0s fade back to dim (was 2.0s) */
-  transition: background-color 1.0s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.4s ease;
-  will-change: background-color, opacity;
+}
+
+/* Layer -3: Dedicated Scene Transition Curtain (Silky Fade between backgrounds) */
+.bg-transition-curtain {
+  position: fixed;
+  inset: 0;
+  z-index: -3;
+  pointer-events: none;
+  background-color: #07080b;
+  opacity: 0;
+  /* Smooth 0.85s Fade-Out curve when revealing the new background */
+  transition: opacity 0.85s cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: opacity;
   transform: translateZ(0);
   -webkit-transform: translateZ(0);
 }
 
-.custom-site-bg-overlay.black-curtain-active {
-  background-color: #090a0f;
-  /* Fast 0.3s fade to solid black (was 0.5s) */
-  transition: background-color 0.3s ease-in, opacity 0.4s ease;
+.bg-transition-curtain.curtain-active {
+  opacity: 1;
+  /* Preserved exact user-validated Fade-In curve */
+  transition: opacity 0.28s ease-in;
+}
+
+
+
+/* Layer -2: Glassmorphism Dimmer Overlay (Dims background behind frosted glass cards) */
+.bg-frosted-dimmer {
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  pointer-events: none;
+  background-color: rgba(0, 0, 0, 0.28);
+  transition: opacity 0.35s ease;
+  will-change: opacity;
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
+}
+
+/* Tab Navigation View Smooth Enter Animation (Gentle Modern Frosted Entrance) */
+@keyframes viewFadeIn {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 10px, 0) scale(0.995);
+    filter: blur(4px);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+    filter: blur(0px);
+  }
+}
+
+.view-transition-wrapper {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  animation: viewFadeIn 0.32s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  will-change: opacity, transform, filter;
+  transform-origin: top center;
 }
 
 /* Tactile Modern Keyboard Keycap Styling */
@@ -283,7 +354,7 @@ main {
   border: none !important;
   border-radius: var(--radius-pill) !important;
   padding: 8px 18px !important;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.15), 0 4px 24px rgba(0, 0, 0, 0.3) !important;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.15), 0 4px 24px rgba(0, 0, 0, 0.20) !important;
   display: flex !important;
   flex-direction: row !important;
   align-items: center !important;
@@ -448,7 +519,7 @@ main {
 
 .badge-indicator.active {
   color: var(--status-on-time);
-  border-color: rgba(16, 185, 129, 0.3);
+  border-color: rgba(255, 255, 255, 0.3);
 }
 
 .badge-indicator.missing {
@@ -483,7 +554,7 @@ main {
 .bento-card {
   border-radius: var(--radius-lg);
   padding: 24px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow-md);
   transition: border-color 0.2s ease, transform 0.2s ease;
 }
 
@@ -601,11 +672,11 @@ button > span,
 .btn-success {
   background-color: var(--status-on-time-bg);
   color: var(--status-on-time);
-  border: 1px solid rgba(16, 185, 129, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.3);
 }
 
 .btn-success:hover {
-  background-color: rgba(16, 185, 129, 0.2);
+  background-color: rgba(255, 255, 255, 0.2);
 }
 
 .btn-danger {
@@ -835,7 +906,7 @@ button > span,
 }
 
 /* Solid Heatmap Colors (Zero Gradients) */
-.heatmap-cell.level-0 { background-color: #10b981; } /* 0 issues: Perfect */
+.heatmap-cell.level-0 { background-color: #ffffff; } /* 0 issues: Perfect */
 .heatmap-cell.level-1 { background-color: #84cc16; } /* 1 issue */
 .heatmap-cell.level-2 { background-color: #f59e0b; } /* 2 issues */
 .heatmap-cell.level-3 { background-color: #f97316; } /* 3 issues */
@@ -946,6 +1017,107 @@ html[dir="rtl"] .message-bubble.user {
   border-radius: 0 !important;
   box-shadow: none !important;
   color: var(--text-primary);
+  animation: assistantBubbleEnter 0.38s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  will-change: opacity, transform;
+  transform: translateZ(0);
+}
+
+@keyframes assistantBubbleEnter {
+  0% {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Three Animated Dots Typing Indicator Pill (Unclipped Pure GPU Smoothness) */
+.typing-indicator-container {
+  display: flex;
+  align-items: center;
+  padding: 4px 0 10px 0;
+}
+
+.typing-indicator-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 58px;
+  height: 32px;
+  padding: 0 14px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 9999px;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  animation: typingPillEnterSmooth 0.45s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  will-change: transform, opacity;
+  transform: translateZ(0);
+}
+
+.typing-indicator-pill.exiting {
+  animation: typingPillExitSmooth 0.28s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes typingPillEnterSmooth {
+  0% {
+    opacity: 0;
+    transform: translateY(12px) scale(0.88);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes typingPillExitSmooth {
+  0% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.90);
+  }
+}
+
+.typing-dot {
+  width: 6px;
+  height: 6px;
+  background-color: #9ca3af;
+  border-radius: 50%;
+  animation: typingDotWave 1.4s infinite ease-in-out both;
+  will-change: transform, opacity, background-color;
+  transform: translateZ(0);
+}
+
+.typing-dot:nth-child(1) {
+  animation-delay: -0.32s;
+}
+
+.typing-dot:nth-child(2) {
+  animation-delay: -0.16s;
+}
+
+.typing-dot:nth-child(3) {
+  animation-delay: 0s;
+}
+
+@keyframes typingDotWave {
+  0%, 70%, 100% {
+    transform: translateY(0) scale(0.8) translateZ(0);
+    opacity: 0.4;
+    background-color: #9ca3af;
+  }
+  35% {
+    transform: translateY(-3.5px) scale(1.15) translateZ(0);
+    opacity: 1;
+    background-color: #ffffff;
+  }
 }
 
 .message-action-toolbar {
@@ -1736,7 +1908,7 @@ html[dir="ltr"] .rich-chat-input:empty::before {
   padding: 10px 22px;
   background-color: var(--status-on-time);
   color: #000000;
-  border: 1px solid rgba(16, 185, 129, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.4);
   border-radius: var(--radius-pill);
   font-size: 0.88rem;
   font-weight: 700;
@@ -1748,8 +1920,8 @@ html[dir="ltr"] .rich-chat-input:empty::before {
 }
 
 .btn-primary:hover:not(:disabled) {
-  background-color: #059669;
-  border-color: rgba(16, 185, 129, 0.6);
+  background-color: #e2e8f0;
+  border-color: rgba(255, 255, 255, 0.6);
   transform: translateY(-1px);
 }
 
@@ -1786,4 +1958,17 @@ html[dir="ltr"] .rich-chat-input:empty::before {
 .btn-secondary:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* Book Reader & Habit Progression Styles */
+.book-reader-view-wrapper {
+  width: 100%;
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 0 12px;
+}
+
+.book-active-reader-stage canvas {
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
+  border-radius: 4px;
 }

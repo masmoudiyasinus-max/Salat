@@ -12,8 +12,6 @@ import {
   Paperclip,
   X,
   Edit2,
-  Clock,
-  ShieldCheck,
   Check,
   FileText,
   RefreshCw,
@@ -21,16 +19,10 @@ import {
   RotateCcw,
   Info,
   Image as ImageIcon,
-  ZoomIn,
-  Download,
-  Sliders,
-  CheckCircle2,
   ThumbsUp,
   ThumbsDown,
   RotateCw,
   Copy,
-  MoreHorizontal,
-  Volume2,
   Pause,
   Play,
   SpellCheck,
@@ -45,10 +37,11 @@ import {
   deleteSession,
   resetChatSessions,
   getSettings,
-  saveSettings,
+  compressImageFile,
 } from '../services/storage';
 import { sendGeminiChatMessage, generateSessionTitle, correctSpellingText } from '../services/geminiApi';
-import { getTranslation } from '../services/i18n';
+import { extractMuneerAction, executeSettingsActionDirectly } from '../services/muneerActions';
+import { APP_EVENTS } from '../services/prayerConstants';
 
 function parseInlineMarkdownStatic(text) {
   if (!text) return '';
@@ -320,9 +313,8 @@ function handleEditorPaste(e, editorEl, attachedFilesMapRef, setHasContent) {
     e.preventDefault();
     const file = imageItem.getAsFile();
     if (file) {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const content = event.target?.result;
+      compressImageFile(file, 1000, 1000, 0.70).then((compressedContent) => {
+        const content = compressedContent || '';
         const fileObj = {
           id: 'file_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
           name: file.name || 'image_' + Date.now() + '.png',
@@ -335,8 +327,7 @@ function handleEditorPaste(e, editorEl, attachedFilesMapRef, setHasContent) {
           attachedFilesMapRef.current[fileObj.id] = fileObj;
         }
         insertFileChipToEditor(editorEl, fileObj, attachedFilesMapRef, setHasContent);
-      };
-      reader.readAsDataURL(file);
+      });
       return;
     }
   }
@@ -754,87 +745,11 @@ function FilePreviewItem({ file, onRemove, onPreview, compact = false }) {
   );
 }
 
-export function extractMuneerAction(rawText) {
-  if (!rawText || typeof rawText !== 'string') return { cleanText: rawText || '', action: null };
 
-  const codeBlockRegex = /```(?:muneer_action|json)?\s*(\{[\s\S]*?"action"\s*:\s*"update_settings"[\s\S]*?\})\s*```/i;
-  const xmlTagRegex = /<(?:muneer_action|json_template)>\s*(\{[\s\S]*?"action"\s*:\s*"update_settings"[\s\S]*?\})\s*<\/(?:muneer_action|json_template)>/i;
-  const genericJsonRegex = /(\{[\s\S]*?"action"\s*:\s*"update_settings"[\s\S]*?\})/i;
-
-  let action = null;
-  let cleanText = rawText;
-
-  const match = rawText.match(codeBlockRegex) || rawText.match(xmlTagRegex) || rawText.match(genericJsonRegex);
-  if (match) {
-    try {
-      action = JSON.parse(match[1]);
-      cleanText = rawText.replace(match[0], '').trim();
-    } catch (e) {
-      console.warn('Could not parse muneer action JSON:', e);
-    }
-  }
-
-  return { cleanText, action };
-}
-
-export function executeSettingsActionDirectly(action, onSettingsSaved) {
-  if (!action || action.action !== 'update_settings' || !action.changes) return;
-
-  try {
-    const currentSettings = getSettings();
-    const normalizedChanges = {};
-
-    Object.entries(action.changes).forEach(([key, val]) => {
-      const k = String(key).toLowerCase();
-      if (k.includes('city') || k.includes('مدينة')) {
-        normalizedChanges.city = val;
-      } else if (k.includes('country') || k.includes('دولة') || k.includes('بلد')) {
-        normalizedChanges.country = val;
-      } else if (k.includes('timeformat') || k.includes('format') || k.includes('تنسيق')) {
-        normalizedChanges.timeFormat = String(val).includes('24') ? '24' : '12';
-      } else if (k.includes('grace') || k.includes('مهلة')) {
-        normalizedChanges.gracePeriodMinutes = Number(val) || 15;
-      } else if (k.includes('lang') || k.includes('لغة') || k.includes('language')) {
-        const v = String(val).toLowerCase();
-        normalizedChanges.language = (v.includes('en') || v.includes('ingliz') || v.includes('انجليز') || v.includes('إنقليز') || v.includes('english')) ? 'en' : 'ar';
-      } else if (k.includes('bg') || k.includes('background') || k.includes('خلفية')) {
-        const v = String(val).toLowerCase();
-        if (v.includes('makkah') || v.includes('mecca') || v.includes('مكة')) {
-          normalizedChanges.bgMode = 'makkah';
-        } else if (v.includes('madinah') || v.includes('medina') || v.includes('مدينة')) {
-          normalizedChanges.bgMode = 'madinah';
-        } else if (v.includes('youtube') || v.includes('يوتيوب')) {
-          normalizedChanges.bgMode = 'youtube';
-        } else if (v.includes('off') || v.includes('تعطيل')) {
-          normalizedChanges.bgMode = 'off';
-        } else {
-          normalizedChanges.bgMode = val;
-        }
-      } else if (k.includes('youtube') || k.includes('stream') || k.includes('بث')) {
-        normalizedChanges.youtubeLiveUrl = val;
-      } else {
-        normalizedChanges[key] = val;
-      }
-    });
-
-    const updated = { ...currentSettings, ...normalizedChanges };
-    saveSettings(updated);
-    window.dispatchEvent(new CustomEvent('settings-updated', { detail: updated }));
-    if (onSettingsSaved) onSettingsSaved(updated);
-    return updated;
-  } catch (err) {
-    console.error('Error executing settings action directly:', err);
-  }
-}
-
-function ActionAppliedBadge({ action }) {
-  return null;
-}
 
 export default function ChatView({ settings, onNavigateToSettings, onSettingsSaved }) {
   const lang = settings?.language || 'ar';
   const isEn = lang === 'en';
-  const t = (k, fb) => getTranslation(lang, k, fb);
 
   const [sessions, setSessions] = useState(() => getChatSessions());
   const [activeSessionId, setActiveSessionIdState] = useState(() => {
@@ -849,10 +764,8 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
   const messages = Array.isArray(activeSession.messages) ? activeSession.messages : [];
   const isCurrentChatEmpty = !messages.some((m) => m && m.sender === 'user');
 
-  const [inputText, setInputText] = useState('');
   const [editingMessageId, setEditingMessageId] = useState(null);
   const [editText, setEditText] = useState('');
-  const [attachedFiles, setAttachedFiles] = useState([]);
   const [hasInputContent, setHasInputContent] = useState(false);
   const [previewImageModal, setPreviewImageModal] = useState(null);
 
@@ -865,16 +778,16 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
     const handleContextUpdate = () => {
       setContextTick((prev) => prev + 1);
     };
-    window.addEventListener('records-updated', handleContextUpdate);
-    window.addEventListener('nafl-records-updated', handleContextUpdate);
-    window.addEventListener('settings-updated', handleContextUpdate);
-    window.addEventListener('prayer-times-updated', handleContextUpdate);
+    window.addEventListener(APP_EVENTS.RECORDS_UPDATED, handleContextUpdate);
+    window.addEventListener(APP_EVENTS.NAFL_RECORDS_UPDATED, handleContextUpdate);
+    window.addEventListener(APP_EVENTS.SETTINGS_UPDATED, handleContextUpdate);
+    window.addEventListener(APP_EVENTS.PRAYER_TIMES_UPDATED, handleContextUpdate);
 
     return () => {
-      window.removeEventListener('records-updated', handleContextUpdate);
-      window.removeEventListener('nafl-records-updated', handleContextUpdate);
-      window.removeEventListener('settings-updated', handleContextUpdate);
-      window.removeEventListener('prayer-times-updated', handleContextUpdate);
+      window.removeEventListener(APP_EVENTS.RECORDS_UPDATED, handleContextUpdate);
+      window.removeEventListener(APP_EVENTS.NAFL_RECORDS_UPDATED, handleContextUpdate);
+      window.removeEventListener(APP_EVENTS.SETTINGS_UPDATED, handleContextUpdate);
+      window.removeEventListener(APP_EVENTS.PRAYER_TIMES_UPDATED, handleContextUpdate);
     };
   }, []);
 
@@ -884,8 +797,8 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
         setPreviewImageModal(e.detail);
       }
     };
-    window.addEventListener('preview-chat-image', handler);
-    return () => window.removeEventListener('preview-chat-image', handler);
+    window.addEventListener(APP_EVENTS.PREVIEW_CHAT_IMAGE, handler);
+    return () => window.removeEventListener(APP_EVENTS.PREVIEW_CHAT_IMAGE, handler);
   }, []);
 
   useEffect(() => {
@@ -901,18 +814,38 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
   const [isLoading, setIsLoading] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
+  const [typingState, setTypingState] = useState('hidden'); // 'hidden', 'visible', 'exiting'
   const [correctingMsgId, setCorrectingMsgId] = useState(null);
-  const [liveSeconds, setLiveSeconds] = useState(0);
   const [errorMessage, setErrorMessage] = useState(null);
   const [feedbackMap, setFeedbackMap] = useState({});
   const [copiedMsgId, setCopiedMsgId] = useState(null);
   const [hoveredInfoMsgId, setHoveredInfoMsgId] = useState(null);
   const messagesEndRef = useRef(null);
-  const timerRef = useRef(null);
   const fileInputRef = useRef(null);
   const typewriterIntervalRef = useRef(null);
   const pauseResumeCallbackRef = useRef(null);
   const abortControllerRef = useRef(null);
+
+  // Smooth GPU Entrance & Exit Animation Lifecycle for Typing Indicator
+  useEffect(() => {
+    let timer;
+    if (isLoading) {
+      setTypingState('visible');
+    } else {
+      setTypingState((prev) => {
+        if (prev === 'visible') {
+          timer = setTimeout(() => {
+            setTypingState('hidden');
+          }, 280);
+          return 'exiting';
+        }
+        return 'hidden';
+      });
+    }
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
+  }, [isLoading]);
 
   const hasGeminiKey = Boolean(
     settings && settings.geminiApiKey && settings.geminiApiKey.trim()
@@ -921,7 +854,7 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
   const scrollToBottom = () => {
     try {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    } catch (e) {
+    } catch {
       // Ignore scroll errors
     }
   };
@@ -940,20 +873,6 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
       if (abortControllerRef.current) abortControllerRef.current.abort();
     };
   }, []);
-
-  // Live Timer tick effect (pauses when isPaused is true)
-  useEffect(() => {
-    if (isLoading && !isPaused) {
-      timerRef.current = setInterval(() => {
-        setLiveSeconds((prev) => parseFloat((prev + 0.1).toFixed(1)));
-      }, 100);
-    } else {
-      if (timerRef.current) clearInterval(timerRef.current);
-    }
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-    };
-  }, [isLoading, isPaused]);
 
   // Toggle Pause / Resume generation
   const handleTogglePauseResume = () => {
@@ -1195,27 +1114,40 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
       const targetEditor = isHero ? heroEditorRef.current : activeEditorRef.current;
 
       files.forEach((file) => {
-        const reader = new FileReader();
-        reader.onload = (event) => {
-          const content = event.target?.result;
-          const fileObj = {
-            id: 'file_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
-            name: file.name,
-            size: (file.size / 1024).toFixed(1) + ' KB',
-            type: file.type || 'ملف',
-            isImage: Boolean(file.type && file.type.startsWith('image/')),
-            content: typeof content === 'string' ? content : 'محتوى ملف ثنائي',
-          };
-
-          attachedFilesMapRef.current[fileObj.id] = fileObj;
-          if (targetEditor) {
-            insertFileChipToEditor(targetEditor, fileObj, attachedFilesMapRef, setHasInputContent);
-          }
-        };
-
         if (file.type && file.type.startsWith('image/')) {
-          reader.readAsDataURL(file);
+          compressImageFile(file, 1000, 1000, 0.70).then((compressedContent) => {
+            const fileObj = {
+              id: 'file_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
+              name: file.name,
+              size: (file.size / 1024).toFixed(1) + ' KB',
+              type: file.type || 'image/png',
+              isImage: true,
+              content: typeof compressedContent === 'string' ? compressedContent : '',
+            };
+
+            attachedFilesMapRef.current[fileObj.id] = fileObj;
+            if (targetEditor) {
+              insertFileChipToEditor(targetEditor, fileObj, attachedFilesMapRef, setHasInputContent);
+            }
+          });
         } else {
+          const reader = new FileReader();
+          reader.onload = (event) => {
+            const content = event.target?.result;
+            const fileObj = {
+              id: 'file_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
+              name: file.name,
+              size: (file.size / 1024).toFixed(1) + ' KB',
+              type: file.type || 'ملف',
+              isImage: false,
+              content: typeof content === 'string' ? content : '',
+            };
+
+            attachedFilesMapRef.current[fileObj.id] = fileObj;
+            if (targetEditor) {
+              insertFileChipToEditor(targetEditor, fileObj, attachedFilesMapRef, setHasInputContent);
+            }
+          };
           reader.readAsText(file);
         }
       });
@@ -1224,11 +1156,6 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
     } catch (err) {
       console.error('File upload error:', err);
     }
-  };
-
-  const handleRemoveAttachedFile = (fileId) => {
-    delete attachedFilesMapRef.current[fileId];
-    setAttachedFiles((prev) => prev.filter((f) => f.id !== fileId));
   };
 
   const handleSend = async (textToSend, customPriorMessages = null) => {
@@ -1305,6 +1232,9 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
       setIsLoading(false);
 
       if (res && res.success) {
+        // Wait for three dots to smoothly finish exit fade (280ms) before streaming text
+        await new Promise((r) => setTimeout(r, 280));
+
         const rawText = typeof res.text === 'string' ? res.text : String(res.text || '');
         const msgMetadata = {
           id: (Date.now() + 1).toString(),
@@ -1383,6 +1313,9 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
       setIsLoading(false);
 
       if (res && res.success) {
+        // Wait for three dots to smoothly finish exit fade (280ms) before streaming text
+        await new Promise((r) => setTimeout(r, 280));
+
         const rawText = typeof res.text === 'string' ? res.text : String(res.text || '');
         const msgMetadata = {
           id: (Date.now() + 1).toString(),
@@ -1428,68 +1361,6 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
     const filtered = messages.filter((m) => m && m.id !== msgId);
     const updated = updateSessionMessages(activeSession.id, filtered);
     setSessions([...updated]);
-  };
-
-  const handleApplyAction = (action, msgId) => {
-    if (!action) return;
-
-    try {
-      if (action.action === 'update_settings' && action.changes) {
-        const currentSettings = getSettings();
-        const normalizedChanges = {};
-
-        Object.entries(action.changes).forEach(([key, val]) => {
-          const k = String(key).toLowerCase();
-          if (k.includes('city') || k.includes('مدينة')) {
-            normalizedChanges.city = val;
-          } else if (k.includes('country') || k.includes('دولة') || k.includes('بلد')) {
-            normalizedChanges.country = val;
-          } else if (k.includes('timeformat') || k.includes('format') || k.includes('تنسيق')) {
-            normalizedChanges.timeFormat = String(val).includes('24') ? '24' : '12';
-          } else if (k.includes('grace') || k.includes('مهلة')) {
-            normalizedChanges.gracePeriodMinutes = Number(val) || 15;
-          } else if (k.includes('bg') || k.includes('background') || k.includes('خلفية')) {
-            const v = String(val).toLowerCase();
-            if (v.includes('makkah') || v.includes('mecca') || v.includes('مكة')) {
-              normalizedChanges.bgMode = 'makkah';
-            } else if (v.includes('madinah') || v.includes('medina') || v.includes('مدينة')) {
-              normalizedChanges.bgMode = 'madinah';
-            } else if (v.includes('youtube') || v.includes('يوتيوب')) {
-              normalizedChanges.bgMode = 'youtube';
-            } else if (v.includes('off') || v.includes('تعطيل')) {
-              normalizedChanges.bgMode = 'off';
-            } else {
-              normalizedChanges.bgMode = val;
-            }
-          } else if (k.includes('youtube') || k.includes('stream') || k.includes('بث')) {
-            normalizedChanges.youtubeLiveUrl = val;
-          } else {
-            normalizedChanges[key] = val;
-          }
-        });
-
-        const updated = { ...currentSettings, ...normalizedChanges };
-        saveSettings(updated);
-        window.dispatchEvent(new CustomEvent('settings-updated', { detail: updated }));
-        if (onSettingsSaved) onSettingsSaved(updated);
-      }
-
-      const updatedMsgs = messages.map((m) =>
-        m && m.id === msgId ? { ...m, actionStatus: 'applied' } : m
-      );
-      const updatedSessions = updateSessionMessages(activeSession.id, updatedMsgs);
-      setSessions([...updatedSessions]);
-    } catch (err) {
-      console.error('Error applying action:', err);
-    }
-  };
-
-  const handleRejectAction = (msgId) => {
-    const updatedMsgs = messages.map((m) =>
-      m && m.id === msgId ? { ...m, actionStatus: 'rejected' } : m
-    );
-    const updatedSessions = updateSessionMessages(activeSession.id, updatedMsgs);
-    setSessions([...updatedSessions]);
   };
 
   const handleCorrectSpelling = async (msg) => {
@@ -2046,7 +1917,7 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
                       {/* Text input and action buttons */}
                       <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                         <input
-                          type="text"
+                          type="search"
                           className="form-input"
                           value={editText}
                           onChange={(e) => setEditText(e.target.value)}
@@ -2064,6 +1935,10 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
                           autoCorrect="off"
                           autoCapitalize="off"
                           spellCheck="false"
+                          data-lpignore="true"
+                          data-1p-ignore="true"
+                          data-form-type="other"
+                          name="chat_message_edit_field"
                         />
                         <button
                           className="btn-primary"
@@ -2111,19 +1986,11 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
                     (() => {
                       const extracted = msg.action ? { cleanText: safeText, action: msg.action } : extractMuneerAction(safeText);
                       const displayCleanText = extracted.cleanText || safeText;
-                      const displayAction = msg.action || extracted.action;
 
                       return (
-                        <>
-                          <div style={{ lineHeight: '1.7', position: 'relative' }}>
-                            {formatMarkdownText(displayCleanText, msg.isTyping)}
-                          </div>
-
-                          {/* Applied Action Confirmation Badge */}
-                          {displayAction && (
-                            <ActionAppliedBadge action={displayAction} />
-                          )}
-                        </>
+                        <div style={{ lineHeight: '1.7', position: 'relative' }}>
+                          {formatMarkdownText(displayCleanText, msg.isTyping)}
+                        </div>
                       );
                     })()
                   )}
@@ -2227,7 +2094,7 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
                           style={{
                             background: 'none',
                             border: 'none',
-                            color: copiedMsgId === msg.id ? 'var(--status-on-time, #10b981)' : 'inherit',
+                            color: copiedMsgId === msg.id ? 'var(--status-on-time, #ffffff)' : 'inherit',
                             cursor: 'pointer',
                             padding: '4px',
                             display: 'inline-flex',
@@ -2325,7 +2192,7 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
                               {msg.isEdited && (
                                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', whiteSpace: 'nowrap' }}>
                                   <span style={{ whiteSpace: 'nowrap' }}>{isEn ? 'Status' : 'الحالة'}</span>
-                                  <span style={{ whiteSpace: 'nowrap', color: 'var(--status-on-time, #10b981)' }}>{isEn ? 'Edited' : 'معدلة'}</span>
+                                  <span style={{ whiteSpace: 'nowrap', color: 'var(--status-on-time, #ffffff)' }}>{isEn ? 'Edited' : 'معدلة'}</span>
                                 </div>
                               )}
                             </div>
@@ -2362,7 +2229,7 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
                             style={{
                               background: 'none',
                               border: 'none',
-                              color: feedbackMap[msg.id] === 'up' ? 'var(--status-on-time, #10b981)' : 'inherit',
+                              color: feedbackMap[msg.id] === 'up' ? 'var(--status-on-time, #ffffff)' : 'inherit',
                               cursor: 'pointer',
                               padding: '4px',
                               display: 'inline-flex',
@@ -2426,7 +2293,7 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
                             style={{
                               background: 'none',
                               border: 'none',
-                              color: copiedMsgId === msg.id ? 'var(--status-on-time, #10b981)' : 'inherit',
+                              color: copiedMsgId === msg.id ? 'var(--status-on-time, #ffffff)' : 'inherit',
                               cursor: 'pointer',
                               padding: '4px',
                               display: 'inline-flex',
@@ -2546,8 +2413,8 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', opacity: 0.85 }}>
                             <span
                               style={{
-                                backgroundColor: 'var(--status-on-time-bg, rgba(16, 185, 129, 0.12))',
-                                color: 'var(--status-on-time, #10b981)',
+                                backgroundColor: 'var(--status-on-time-bg, rgba(255, 255, 255, 0.12))',
+                                color: 'var(--status-on-time, #ffffff)',
                                 padding: '2px 8px',
                                 borderRadius: 'var(--radius-pill, 9999px)',
                                 fontSize: '0.7rem',
@@ -2581,38 +2448,17 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
               );
             })}
 
-            {/* Live Loading State & Live Timer Counter */}
-            {isLoading && (
-              <div className="message-bubble assistant">
+            {/* Live Loading State (Three Animated Dots with Pure Smoothness) */}
+            {typingState !== 'hidden' && (
+              <div className={`typing-indicator-container ${typingState === 'exiting' ? 'exiting' : ''}`}>
                 <div
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                  }}
+                  className={`typing-indicator-pill ${typingState === 'exiting' ? 'exiting' : ''}`}
+                  id="ai-typing-indicator"
+                  aria-label={isEn ? 'Thinking...' : 'جاري التفكير...'}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <Sparkles size={16} className="spin" />
-                    <span>{isEn ? 'Thinking and composing response...' : 'جاري التفكير وصياغة الرد...'}</span>
-                  </div>
-                  <div
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '6px',
-                      fontSize: '0.8rem',
-                      color: 'var(--accent-blue)',
-                      fontWeight: '700',
-                    }}
-                  >
-                    <Clock size={14} />
-                    <span>
-                      {typeof liveSeconds === 'number'
-                        ? liveSeconds.toFixed(1)
-                        : '0.0'}{' '}
-                      {isEn ? 's' : 'ثانية'}
-                    </span>
-                  </div>
+                  <span className="typing-dot" />
+                  <span className="typing-dot" />
+                  <span className="typing-dot" />
                 </div>
               </div>
             )}
@@ -3032,9 +2878,9 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
                         borderRadius: 'var(--radius-pill)',
                         fontSize: '0.78rem',
                         fontWeight: historyFilter === 'complete' ? '700' : '500',
-                        backgroundColor: historyFilter === 'complete' ? 'rgba(16, 185, 129, 0.2)' : 'transparent',
-                        color: historyFilter === 'complete' ? '#10b981' : 'var(--text-secondary)',
-                        border: historyFilter === 'complete' ? '1px solid rgba(16, 185, 129, 0.4)' : 'none',
+                        backgroundColor: historyFilter === 'complete' ? 'rgba(255, 255, 255, 0.15)' : 'transparent',
+                        color: historyFilter === 'complete' ? '#ffffff' : 'var(--text-secondary)',
+                        border: historyFilter === 'complete' ? '1px solid rgba(255, 255, 255, 0.35)' : 'none',
                         cursor: 'pointer',
                         transition: 'all 0.15s ease',
                       }}

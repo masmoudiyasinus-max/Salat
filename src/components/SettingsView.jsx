@@ -26,11 +26,13 @@ import {
   Download,
   UploadCloud,
   FileJson,
+  Compass,
+  BookOpen,
+  Table,
 } from 'lucide-react';
 import {
   getSettings,
   saveSettings,
-  getCityNowDate,
   clearAllRecords,
   getPrayerTimesCache,
   savePrayerTimesCache,
@@ -38,10 +40,16 @@ import {
   exportFullUserDataJSON,
   importFullUserDataJSON,
   clearEntireAppData,
+  compressImageFile,
+  getSourceScheduleCache,
+  clearSourceScheduleCache,
+  APP_EVENTS,
 } from '../services/storage';
-import { fetchPrayerTimesFromTavily } from '../services/tavilyApi';
+import { CALCULATION_METHODS, getPrayerTimesForLocation } from '../services/adhanCalculator';
+import { syncFullMonthFromAladhanApi } from '../services/aladhanApiService';
 import { requestNotificationsPermission, requestFreshLocationFromScratch } from '../services/permissionService';
-import { getTranslation } from '../services/i18n';
+import { getLocalizedCountryName, getLocalizedCityName, PALESTINIAN_CITIES, matchesStrictPrefix } from '../services/countryLocalization';
+import ScheduleTableModal from './ScheduleTableModal';
 
 export default function SettingsView({ onSettingsSaved }) {
   const [settings, setSettingsState] = useState(getSettings);
@@ -55,19 +63,29 @@ export default function SettingsView({ onSettingsSaved }) {
   const [notifPermission, setNotifPermission] = useState(() => (typeof window !== 'undefined' && 'Notification' in window ? Notification.permission : 'unsupported'));
   const [syncStatus, setSyncStatus] = useState('');
   const [cachedTimes, setCachedTimes] = useState(() => getPrayerTimesCache());
+  const [scheduleCache, setScheduleCache] = useState(getSourceScheduleCache);
+  const [showScheduleModal, setShowScheduleModal] = useState(false);
 
   const lang = settings.language || 'ar';
   const isEn = lang === 'en';
-  const t = (k, fb) => getTranslation(lang, k, fb);
 
   // Dynamic Countries and Cities API State
   const [countriesList, setCountriesList] = useState([]);
   const [isLoadingCountries, setIsLoadingCountries] = useState(true);
 
   useEffect(() => {
+    const handleSettingsUpdated = (e) => {
+      if (e.detail) {
+        setSettingsState(e.detail);
+      }
+    };
+    window.addEventListener(APP_EVENTS.SETTINGS_UPDATED, handleSettingsUpdated);
+    return () => window.removeEventListener(APP_EVENTS.SETTINGS_UPDATED, handleSettingsUpdated);
+  }, []);
+
+  useEffect(() => {
     let isMounted = true;
     async function fetchCountriesAndCities() {
-      setIsLoadingCountries(true);
       try {
         const response = await fetch('https://countriesnow.space/api/v0.1/countries');
         if (response.ok) {
@@ -89,16 +107,96 @@ export default function SettingsView({ onSettingsSaved }) {
     };
   }, []);
 
+  useEffect(() => {
+    const handleGlobalSettingsUpdate = (e) => {
+      if (e.detail) {
+        setSettingsState(e.detail);
+      }
+    };
+    window.addEventListener(APP_EVENTS.SETTINGS_UPDATED, handleGlobalSettingsUpdate);
+    return () => window.removeEventListener(APP_EVENTS.SETTINGS_UPDATED, handleGlobalSettingsUpdate);
+  }, []);
+
   // Instant Auto-Save Handlers
   const handleInputChange = (field, value) => {
-    setSettingsState((prev) => {
-      const updated = { ...prev, [field]: value };
-      saveSettings(updated);
-      if (onSettingsSaved) onSettingsSaved(updated);
-      return updated;
-    });
+    const fresh = getSettings();
+    const updated = { ...fresh, ...settings, [field]: value };
+    setSettingsState(updated);
+    saveSettings(updated);
+    if (onSettingsSaved) onSettingsSaved(updated);
     setSaveSuccessMsg(isEn ? 'Saved automatically' : 'تم الحفظ الفوري تلقائياً');
     setTimeout(() => setSaveSuccessMsg(''), 2500);
+  };
+
+  const handlePrayerOffsetChange = (prayerId, deltaValue) => {
+    const validNum = Math.max(-60, Math.min(60, Number(deltaValue) || 0));
+    const currentOffsets = settings.prayerOffsets || { Fajr: 0, Sunrise: 0, Dhuhr: 0, Asr: 0, Maghrib: 0, Isha: 0 };
+    const updatedOffsets = { ...currentOffsets, [prayerId]: validNum };
+    handleInputChange('prayerOffsets', updatedOffsets);
+  };
+
+  const autoSyncLocationPrayerTimes = async (targetCity, targetCountry, targetMethod) => {
+    const fresh = getSettings();
+    const city = (targetCity || fresh.city || settings.city || '').trim();
+    const country = (targetCountry || fresh.country || settings.country || '').trim();
+    const method = targetMethod || fresh.calculationMethod || settings.calculationMethod || 'auto';
+    if (!city && !country) return;
+
+    const locCity = getLocalizedCityName(city, isEn ? 'en' : 'ar') || city;
+    const locCountry = getLocalizedCountryName(country, isEn ? 'en' : 'ar') || country;
+    const fullLoc = locCity ? (locCountry ? `${locCity} (${locCountry})` : locCity) : locCountry;
+
+    setIsSyncingTimes(true);
+    setSyncStatus(isEn ? `Syncing accurate schedule for ${fullLoc}...` : `جاري مزامنة الجدول بدقة لـ ${fullLoc}...`);
+    setSaveSuccessMsg(isEn ? `Syncing prayer times for ${fullLoc}...` : `جاري مزامنة وتحديث مواقيت الصلاة لـ ${fullLoc}...`);
+
+    try {
+      // 1. Try instant sync from Aladhan API (stores full 60-day schedule offline)
+      const apiRes = await syncFullMonthFromAladhanApi(city, country, method);
+      if (apiRes && apiRes.success && apiRes.totalDays > 0) {
+        setScheduleCache(getSourceScheduleCache());
+        const freshTimes = getPrayerTimesCache();
+        setCachedTimes(freshTimes);
+        setSyncStatus(isEn ? `Synced automatically for ${fullLoc}` : `تمت المزامنة التلقائية لـ ${fullLoc}`);
+        setSaveSuccessMsg(isEn ? `✓ Prayer times synced successfully for ${fullLoc}` : `✓ تمت مزامنة وتحديث مواقيت الصلاة لـ ${fullLoc} بنجاح`);
+        setTimeout(() => setSaveSuccessMsg(''), 4500);
+        setIsSyncingTimes(false);
+        return;
+      }
+    } catch (e) {
+      console.warn('Background Aladhan API sync fallback to astronomical calculation:', e);
+    }
+
+    // 2. Fallback to client-side astronomical calculation via adhan-js
+    try {
+      const today = new Date();
+      const targetDateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+      const res = await getPrayerTimesForLocation(city, country, targetDateStr, { calculationMethod: method });
+
+      if (res && res.success && res.times) {
+        const hh = String(today.getHours()).padStart(2, '0');
+        const mm = String(today.getMinutes()).padStart(2, '0');
+        const timeNow = toWesternDigits(`${hh}:${mm}`);
+
+        const mergedTimes = {
+          ...res.times,
+          timezone: res.timezone || resolveTimezoneForLocation(city, country),
+          lastSyncedDate: targetDateStr,
+          lastSyncedTime: timeNow,
+          source: res.source || (isEn ? 'Astronomical Calculation (adhan-js)' : 'حساب فلكي محلي (adhan-js)'),
+        };
+
+        savePrayerTimesCache(mergedTimes);
+        setCachedTimes(mergedTimes);
+        setSyncStatus(isEn ? `Calculated accurately at ${timeNow}` : `تم الحساب بدقة في ${timeNow}`);
+        setSaveSuccessMsg(isEn ? `✓ Prayer times updated accurately for ${fullLoc}` : `✓ تمت مزامنة وحساب مواقيت الصلاة لـ ${fullLoc} بدقة`);
+        setTimeout(() => setSaveSuccessMsg(''), 4500);
+      }
+    } catch (err) {
+      console.error('Error during automatic prayer calculation:', err);
+    } finally {
+      setIsSyncingTimes(false);
+    }
   };
 
   const handleCountrySelect = (selectedCountry) => {
@@ -106,6 +204,10 @@ export default function SettingsView({ onSettingsSaved }) {
       ? countriesList.find((c) => c.country.toLowerCase() === selectedCountry.toLowerCase())
       : null;
     const firstCity = countryObj && countryObj.cities.length > 0 ? countryObj.cities[0] : '';
+    const locCountry = getLocalizedCountryName(selectedCountry, isEn ? 'en' : 'ar') || selectedCountry;
+    const locCity = getLocalizedCityName(firstCity, isEn ? 'en' : 'ar') || firstCity;
+    const fullLoc = locCity ? `${locCity} (${locCountry})` : locCountry;
+
     setSettingsState((prev) => {
       const updated = {
         ...prev,
@@ -116,54 +218,8 @@ export default function SettingsView({ onSettingsSaved }) {
       if (onSettingsSaved) onSettingsSaved(updated);
       return updated;
     });
-    setSaveSuccessMsg(isEn ? 'Location updated and prayer times synced' : 'تم تحديث الموقع وحفظ التوقيت فورياً');
-    setTimeout(() => setSaveSuccessMsg(''), 3000);
-  };
-
-  const handleManualSyncPrayerTimes = async () => {
-    if (isSyncingTimes) return;
-    setIsSyncingTimes(true);
-    setSyncStatus(isEn ? 'Syncing prayer times...' : 'جاري مزامنة المواقيت...');
-
-    const today = new Date();
-    const targetDateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-
-    try {
-      const res = await fetchPrayerTimesFromTavily(
-        settings.tavilyApiKey,
-        settings.prayerSourceUrl,
-        settings.city,
-        settings.country,
-        targetDateStr,
-        settings.geminiApiKey
-      );
-
-      if (res && res.success && res.times) {
-        const hh = String(today.getHours()).padStart(2, '0');
-        const mm = String(today.getMinutes()).padStart(2, '0');
-        const timeNow = toWesternDigits(`${hh}:${mm}`);
-
-        const mergedTimes = {
-          ...res.times,
-          timezone: res.timezone || cachedTimes?.timezone || '',
-          lastSyncedDate: targetDateStr,
-          lastSyncedTime: timeNow,
-          source: res.source || (isEn ? 'Official Prayer Times' : 'المواقيت الرسمية'),
-        };
-
-        savePrayerTimesCache(mergedTimes);
-        setCachedTimes(mergedTimes);
-        setSyncStatus(isEn ? `Synced successfully at ${timeNow}` : `تمت المزامنة بنجاح في ${timeNow}`);
-        setSaveSuccessMsg(isEn ? 'Prayer times synced and saved' : 'تم تحديث ومزامنة مواقيت الصلاة وحفظها بنجاح');
-        setTimeout(() => setSaveSuccessMsg(''), 3000);
-      } else {
-        setSyncStatus(isEn ? 'Sync failed. Please check city or API keys.' : 'تعذر التحديث، يرجى التحقق من مفاتيح API واسم المدينة.');
-      }
-    } catch (e) {
-      setSyncStatus(isEn ? 'Connection error during sync.' : 'حدث خطأ أثناء الاتصال بمزود المواقيت.');
-    } finally {
-      setIsSyncingTimes(false);
-    }
+    setSaveSuccessMsg(isEn ? `Syncing prayer times for ${fullLoc}...` : `جاري مزامنة وتحديث مواقيت الصلاة لـ ${fullLoc}...`);
+    setTimeout(() => autoSyncLocationPrayerTimes(firstCity, selectedCountry, settings.calculationMethod), 60);
   };
 
   const handleEnableNotifications = async () => {
@@ -185,6 +241,9 @@ export default function SettingsView({ onSettingsSaved }) {
       const locText = detected.city ? `${detected.city}, ${detected.country}` : detected.country;
       setSaveSuccessMsg(isEn ? `Live location detected: ${locText}` : `تم تحديد الموقع المباشر: ${locText}`);
       setTimeout(() => setSaveSuccessMsg(''), 4000);
+      if (detected.city || detected.country) {
+        autoSyncLocationPrayerTimes(detected.city, detected.country, freshSettings.calculationMethod);
+      }
     });
     setIsDetectingLocation(false);
     if (!res.success) {
@@ -196,33 +255,44 @@ export default function SettingsView({ onSettingsSaved }) {
     }
   };
 
-  const processFiles = (files) => {
+
+
+
+
+  const handleClearScheduleCache = () => {
+    clearSourceScheduleCache();
+    setScheduleCache(null);
+    setSaveSuccessMsg(isEn ? 'Source schedule cache cleared.' : 'تم مسح الجدول المخزن محلياً.');
+    setTimeout(() => setSaveSuccessMsg(''), 3000);
+  };
+
+  const processFiles = async (files) => {
     if (!files || files.length === 0) return;
-    const validFiles = Array.from(files).filter((file) => file.type.startsWith('image/'));
+    const validFiles = Array.from(files).filter((file) => file.type && file.type.startsWith('image/'));
     if (validFiles.length === 0) return;
 
     let updatedList = Array.isArray(settings.customBgImages) ? [...settings.customBgImages] : [];
     let lastLoadedUrl = '';
-    let processedCount = 0;
 
-    validFiles.forEach((file) => {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const dataUrl = event.target.result;
-        if (dataUrl && !updatedList.includes(dataUrl)) {
-          updatedList.push(dataUrl);
-          lastLoadedUrl = dataUrl;
-        }
-        processedCount++;
-        if (processedCount === validFiles.length) {
-          handleInputChange('customBgImages', updatedList);
-          if (lastLoadedUrl) {
-            handleInputChange('activeCustomBgImage', lastLoadedUrl);
-          }
-        }
-      };
-      reader.readAsDataURL(file);
-    });
+    for (const file of validFiles) {
+      // Compress wallpaper to standard resolution & quality (reduces size by ~95%)
+      const compressedDataUrl = await compressImageFile(file, 1920, 1080, 0.75);
+      if (compressedDataUrl && !updatedList.includes(compressedDataUrl)) {
+        updatedList.push(compressedDataUrl);
+        lastLoadedUrl = compressedDataUrl;
+      }
+    }
+
+    // Limit custom wallpapers to a safe maximum of 5 images
+    if (updatedList.length > 5) {
+      updatedList = updatedList.slice(-5);
+    }
+
+    handleInputChange('customBgImages', updatedList);
+    if (lastLoadedUrl) {
+      handleInputChange('activeCustomBgImage', lastLoadedUrl);
+      handleInputChange('bgMode', 'custom_image');
+    }
   };
 
   const handleFileUpload = (e) => {
@@ -262,17 +332,85 @@ export default function SettingsView({ onSettingsSaved }) {
 
   const handleSelectActiveBg = (imgUrl) => {
     handleInputChange('activeCustomBgImage', imgUrl);
+    handleInputChange('bgMode', 'custom_image');
   };
 
-  // Selected Country Object & Cities
-  const countryOptions = Array.isArray(countriesList) ? countriesList.map((c) => c.country) : [];
+  // Selected Country Object & Cities (Localized according to active language)
+  const countryOptions = Array.isArray(countriesList)
+    ? countriesList.map((c) => {
+        const rawName = c.country;
+        return {
+          value: rawName,
+          label: getLocalizedCountryName(rawName, isEn ? 'en' : 'ar'),
+        };
+      }).sort((a, b) => a.label.localeCompare(b.label, isEn ? 'en' : 'ar'))
+    : [];
   const selectedCountryObj = (Array.isArray(countriesList) && settings.country)
     ? countriesList.find((c) => c.country.toLowerCase() === settings.country.toLowerCase())
     : null;
-  const availableCities = selectedCountryObj?.cities || [];
+  const isPalestineSelected = settings.country && (
+    settings.country.toLowerCase() === 'israel' ||
+    settings.country.toLowerCase() === 'palestine' ||
+    settings.country.toLowerCase() === 'state of palestine' ||
+    settings.country === 'فلسطين'
+  );
+
+  const rawCities = isPalestineSelected
+    ? Array.from(new Set([...PALESTINIAN_CITIES, ...(selectedCountryObj?.cities || [])]))
+    : (selectedCountryObj?.cities || []);
+
+  const cityOptions = Array.isArray(rawCities)
+    ? rawCities.map((cityName) => ({
+        value: cityName,
+        label: getLocalizedCityName(cityName, isEn ? 'en' : 'ar'),
+      })).sort((a, b) => a.label.localeCompare(b.label, isEn ? 'en' : 'ar'))
+    : [];
+  const calculationMethodOptions = CALCULATION_METHODS.map((m) => ({
+    id: m.id,
+    label: isEn ? m.nameEn : m.nameAr,
+  }));
+  const madhabOptions = [
+    { id: 'shafi', label: isEn ? 'Standard (Shafi, Maliki, Hanbali - 1x shadow)' : 'جمهور الفقهاء (الشافعي، المالكي، الحنبلي - الظل الواحد)' },
+    { id: 'hanafi', label: isEn ? 'Hanafi School (2x shadow length)' : 'المذهب الحنفي (مِثلي ظل الشيء)' },
+  ];
 
   return (
     <div className="settings-view">
+      {/* Floating Notification Toast for Location & Prayer Times Sync */}
+      {saveSuccessMsg && (
+        <div
+          style={{
+            position: 'fixed',
+            top: '24px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 99999,
+            backgroundColor: isSyncingTimes ? 'rgba(15, 23, 42, 0.95)' : '#ffffff',
+            color: isSyncingTimes ? '#f8fafc' : '#000000',
+            border: '1px solid rgba(255, 255, 255, 0.4)',
+            boxShadow: '0 12px 32px rgba(0, 0, 0, 0.6), 0 0 20px rgba(255, 255, 255, 0.25)',
+            backdropFilter: 'blur(16px)',
+            WebkitBackdropFilter: 'blur(16px)',
+            padding: '10px 24px',
+            borderRadius: 'var(--radius-pill)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px',
+            fontSize: '0.9rem',
+            fontWeight: '700',
+            animation: 'slideDown 0.25s cubic-bezier(0.16, 1, 0.3, 1)',
+            pointerEvents: 'none',
+          }}
+        >
+          {isSyncingTimes ? (
+            <RefreshCw size={17} style={{ animation: 'spin 1s linear infinite', color: '#60a5fa' }} />
+          ) : (
+            <CheckCircle size={18} style={{ color: '#000000' }} />
+          )}
+          <span>{saveSuccessMsg}</span>
+        </div>
+      )}
+
       <div style={{ display: 'flex', justifyContent: 'flex-start', alignItems: 'center', marginBottom: '16px' }}>
         <div
           style={{
@@ -281,7 +419,7 @@ export default function SettingsView({ onSettingsSaved }) {
             gap: '8px',
             backgroundColor: 'var(--status-on-time-bg)',
             color: 'var(--status-on-time)',
-            border: '1px solid rgba(16, 185, 129, 0.3)',
+            border: '1px solid rgba(255, 255, 255, 0.25)',
             padding: '8px 16px',
             borderRadius: 'var(--radius-pill)',
             fontSize: '0.85rem',
@@ -315,7 +453,7 @@ export default function SettingsView({ onSettingsSaved }) {
                 gap: '6px',
                 padding: '8px 16px',
                 borderRadius: 'var(--radius-pill)',
-                backgroundColor: (settings.bgMode || 'makkah') === 'makkah' ? 'rgba(16, 185, 129, 0.2)' : 'var(--bg-primary)',
+                backgroundColor: (settings.bgMode || 'makkah') === 'makkah' ? 'rgba(255, 255, 255, 0.15)' : 'var(--bg-primary)',
                 border: (settings.bgMode || 'makkah') === 'makkah' ? '1px solid var(--status-on-time)' : '1px solid var(--border-subtle)',
                 color: (settings.bgMode || 'makkah') === 'makkah' ? 'var(--status-on-time)' : 'var(--text-secondary)',
                 fontWeight: '700',
@@ -337,7 +475,7 @@ export default function SettingsView({ onSettingsSaved }) {
                 gap: '6px',
                 padding: '8px 16px',
                 borderRadius: 'var(--radius-pill)',
-                backgroundColor: settings.bgMode === 'madinah' ? 'rgba(16, 185, 129, 0.2)' : 'var(--bg-primary)',
+                backgroundColor: settings.bgMode === 'madinah' ? 'rgba(255, 255, 255, 0.15)' : 'var(--bg-primary)',
                 border: settings.bgMode === 'madinah' ? '1px solid var(--status-on-time)' : '1px solid var(--border-subtle)',
                 color: settings.bgMode === 'madinah' ? 'var(--status-on-time)' : 'var(--text-secondary)',
                 fontWeight: '700',
@@ -364,7 +502,7 @@ export default function SettingsView({ onSettingsSaved }) {
                 gap: '6px',
                 padding: '8px 16px',
                 borderRadius: 'var(--radius-pill)',
-                backgroundColor: settings.bgMode === 'custom_image' ? 'rgba(16, 185, 129, 0.2)' : 'var(--bg-primary)',
+                backgroundColor: settings.bgMode === 'custom_image' ? 'rgba(255, 255, 255, 0.15)' : 'var(--bg-primary)',
                 border: settings.bgMode === 'custom_image' ? '1px solid var(--status-on-time)' : '1px solid var(--border-subtle)',
                 color: settings.bgMode === 'custom_image' ? 'var(--status-on-time)' : 'var(--text-secondary)',
                 fontWeight: '700',
@@ -379,14 +517,14 @@ export default function SettingsView({ onSettingsSaved }) {
           </div>
 
           {(settings.bgMode || 'makkah') === 'makkah' && (
-            <div style={{ backgroundColor: 'var(--bg-primary)', padding: '14px 18px', borderRadius: 'var(--radius-md)', border: '1px solid rgba(16, 185, 129, 0.3)', fontSize: '0.85rem', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <div style={{ backgroundColor: 'var(--bg-primary)', padding: '14px 18px', borderRadius: 'var(--radius-md)', border: '1px solid rgba(255, 255, 255, 0.25)', fontSize: '0.85rem', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '10px' }}>
               <CheckCircle size={18} style={{ color: 'var(--status-on-time)', flexShrink: 0 }} />
               <span>{isEn ? 'Holy Makkah Live Stream is now active as primary background.' : 'البث المباشر المكرّم للحرم المكي الشريف يعمل الآن كفيديو أساسي افتراضي في خلفية الموقع.'}</span>
             </div>
           )}
 
           {settings.bgMode === 'madinah' && (
-            <div style={{ backgroundColor: 'var(--bg-primary)', padding: '14px 18px', borderRadius: 'var(--radius-md)', border: '1px solid rgba(16, 185, 129, 0.3)', fontSize: '0.85rem', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <div style={{ backgroundColor: 'var(--bg-primary)', padding: '14px 18px', borderRadius: 'var(--radius-md)', border: '1px solid rgba(255, 255, 255, 0.25)', fontSize: '0.85rem', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '10px' }}>
               <CheckCircle size={18} style={{ color: 'var(--status-on-time)', flexShrink: 0 }} />
               <span>{isEn ? 'Holy Madinah Live Stream is now active as primary background.' : 'البث المباشر المكرّم للمدينة النبوية والمسجد النبوي الشريف يعمل الآن كفيديو حي في خلفية الموقع.'}</span>
             </div>
@@ -416,7 +554,7 @@ export default function SettingsView({ onSettingsSaved }) {
                       ? '2px dashed var(--status-on-time)'
                       : '2px dashed rgba(255, 255, 255, 0.25)',
                     backgroundColor: isDraggingOver
-                      ? 'rgba(16, 185, 129, 0.12)'
+                      ? 'rgba(255, 255, 255, 0.15)'
                       : 'rgba(0, 0, 0, 0.35)',
                     backdropFilter: 'blur(16px)',
                     WebkitBackdropFilter: 'blur(16px)',
@@ -553,7 +691,7 @@ export default function SettingsView({ onSettingsSaved }) {
                 padding: '12px 22px',
                 borderRadius: 'var(--radius-pill)',
                 border: (settings.language || 'ar') === 'ar' ? '1.5px solid var(--status-on-time)' : '1px solid var(--border-subtle)',
-                backgroundColor: (settings.language || 'ar') === 'ar' ? 'rgba(16, 185, 129, 0.18)' : 'rgba(255, 255, 255, 0.05)',
+                backgroundColor: (settings.language || 'ar') === 'ar' ? 'rgba(255, 255, 255, 0.15)' : 'rgba(255, 255, 255, 0.05)',
                 color: (settings.language || 'ar') === 'ar' ? '#ffffff' : 'var(--text-secondary)',
                 fontSize: '0.92rem',
                 fontWeight: '700',
@@ -576,7 +714,7 @@ export default function SettingsView({ onSettingsSaved }) {
                 padding: '12px 22px',
                 borderRadius: 'var(--radius-pill)',
                 border: settings.language === 'en' ? '1.5px solid var(--status-on-time)' : '1px solid var(--border-subtle)',
-                backgroundColor: settings.language === 'en' ? 'rgba(16, 185, 129, 0.18)' : 'rgba(255, 255, 255, 0.05)',
+                backgroundColor: settings.language === 'en' ? 'rgba(255, 255, 255, 0.15)' : 'rgba(255, 255, 255, 0.05)',
                 color: settings.language === 'en' ? '#ffffff' : 'var(--text-secondary)',
                 fontSize: '0.92rem',
                 fontWeight: '700',
@@ -610,20 +748,56 @@ export default function SettingsView({ onSettingsSaved }) {
               value={settings.country || ''}
               options={countryOptions}
               onChange={handleCountrySelect}
-              placeholder={isEn ? 'Select Country...' : 'اختر الدولة...'}
+              placeholder={isLoadingCountries ? (isEn ? 'Loading countries...' : 'جاري تحميل قائمة الدول...') : (isEn ? 'Select Country...' : 'اختر الدولة...')}
               searchPlaceholder={isEn ? 'Search Country...' : 'ابحث عن الدولة...'}
               icon={Globe}
               isEn={isEn}
+              isLoading={isLoadingCountries}
             />
 
             <SearchableSelect
               label={isEn ? 'City' : 'المدينة'}
               value={settings.city || ''}
-              options={availableCities}
-              onChange={(city) => handleInputChange('city', city)}
+              options={cityOptions}
+              onChange={(city) => {
+                handleInputChange('city', city);
+                const locCity = getLocalizedCityName(city, isEn ? 'en' : 'ar') || city;
+                const locCountry = getLocalizedCountryName(settings.country, isEn ? 'en' : 'ar') || settings.country;
+                const fullLoc = locCountry ? `${locCity} (${locCountry})` : locCity;
+                setSaveSuccessMsg(isEn ? `Syncing prayer times for ${fullLoc}...` : `جاري مزامنة وتحديث مواقيت الصلاة لـ ${fullLoc}...`);
+                setTimeout(() => autoSyncLocationPrayerTimes(city, settings.country, settings.calculationMethod), 60);
+              }}
               placeholder={isEn ? 'Select City...' : 'اختر المدينة...'}
               searchPlaceholder={isEn ? 'Search City...' : 'ابحث عن المدينة...'}
               icon={Building2}
+              isEn={isEn}
+            />
+
+            <SearchableSelect
+              label={isEn ? 'Official Calculation Authority' : 'هيئة الحساب الرسمية للمواقيت'}
+              value={settings.calculationMethod || 'auto'}
+              options={calculationMethodOptions}
+              onChange={(methodId) => {
+                handleInputChange('calculationMethod', methodId);
+                setTimeout(() => autoSyncLocationPrayerTimes(settings.city, settings.country, methodId), 60);
+              }}
+              placeholder={isEn ? 'Select Calculation Authority...' : 'اختر هيئة الحساب المعتمدة...'}
+              searchPlaceholder={isEn ? 'Search Authority...' : 'ابحث عن الهيئة...'}
+              icon={Compass}
+              isEn={isEn}
+            />
+
+            <SearchableSelect
+              label={isEn ? 'Asr Jurisprudential School (Madhab)' : 'المذهب الفقهي لصلاة العصر'}
+              value={settings.asrMadhab || 'shafi'}
+              options={madhabOptions}
+              onChange={(mId) => {
+                handleInputChange('asrMadhab', mId);
+                setTimeout(() => autoSyncLocationPrayerTimes(settings.city, settings.country, settings.calculationMethod), 60);
+              }}
+              placeholder={isEn ? 'Select Asr Madhab...' : 'اختر المذهب الفقهي...'}
+              searchPlaceholder={isEn ? 'Search Madhab...' : 'ابحث عن المذهب...'}
+              icon={BookOpen}
               isEn={isEn}
             />
 
@@ -688,7 +862,7 @@ export default function SettingsView({ onSettingsSaved }) {
               <button
                 type="button"
                 className="btn-primary"
-                onClick={handleManualSyncPrayerTimes}
+                onClick={() => autoSyncLocationPrayerTimes(settings.city, settings.country, settings.calculationMethod)}
                 disabled={isSyncingTimes}
                 style={{
                   padding: '10px 22px',
@@ -709,6 +883,82 @@ export default function SettingsView({ onSettingsSaved }) {
               </button>
             </div>
 
+            {/* Schedule Status & Cached Days Banner (Aladhan API Cache) */}
+            {scheduleCache && scheduleCache.totalDays > 0 && (
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '12px 16px',
+                  backgroundColor: 'rgba(255, 255, 255, 0.08)',
+                  border: '1px solid rgba(255, 255, 255, 0.2)',
+                  borderRadius: 'var(--radius-md)',
+                  flexWrap: 'wrap',
+                  gap: '10px',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <Table size={18} style={{ color: 'var(--status-on-time)', flexShrink: 0 }} />
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                    <span style={{ fontSize: '0.84rem', fontWeight: '700', color: 'var(--text-primary)' }}>
+                      {isEn
+                        ? `Multi-day Table Cached: ${scheduleCache.totalDays} Days Available (Offline)`
+                        : `تم تخزين جدول محلي لـ ${scheduleCache.totalDays} يوماً بنجاح (للعمل بدون نت)`}
+                    </span>
+                    <span style={{ fontSize: '0.76rem', color: 'var(--text-muted)' }}>
+                      {isEn ? `Source: ${scheduleCache.domain || 'Aladhan API (Official)'}` : `المصدر: ${scheduleCache.domain || 'Aladhan API (الرسمي)'}`}
+                    </span>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    onClick={() => setShowScheduleModal(true)}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      padding: '6px 14px',
+                      borderRadius: 'var(--radius-pill)',
+                      backgroundColor: 'rgba(255, 255, 255, 0.12)',
+                      border: '1px solid rgba(255, 255, 255, 0.3)',
+                      color: 'var(--status-on-time)',
+                      fontSize: '0.78rem',
+                      fontWeight: '700',
+                      cursor: 'pointer',
+                    }}
+                    id="btn-view-schedule-table"
+                  >
+                    <Eye size={13} />
+                    <span>{isEn ? 'View Schedule Table' : 'الإطلاع على الجدول الكامل'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleClearScheduleCache}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      padding: '6px 12px',
+                      borderRadius: 'var(--radius-pill)',
+                      backgroundColor: 'rgba(239, 68, 68, 0.15)',
+                      border: '1px solid rgba(239, 68, 68, 0.3)',
+                      color: 'var(--status-missed)',
+                      fontSize: '0.78rem',
+                      fontWeight: '700',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <Trash2 size={13} />
+                    <span>{isEn ? 'Clear Cache' : 'مسح الجدول المخزن'}</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Daily Auto-Sync Rule Info */}
             <div
               style={{
@@ -716,8 +966,8 @@ export default function SettingsView({ onSettingsSaved }) {
                 alignItems: 'center',
                 gap: '12px',
                 padding: '12px 16px',
-                backgroundColor: 'rgba(16, 185, 129, 0.08)',
-                border: '1px solid rgba(16, 185, 129, 0.22)',
+                backgroundColor: 'rgba(255, 255, 255, 0.08)',
+                border: '1px solid rgba(255, 255, 255, 0.2)',
                 borderRadius: 'var(--radius-md)',
               }}
             >
@@ -781,6 +1031,137 @@ export default function SettingsView({ onSettingsSaved }) {
                 </button>
               )}
             </div>
+          </div>
+        </div>
+
+        {/* Manual Prayer Offsets & Minute Fine-Tuning Card */}
+        <div className="bento-card" style={{ gridColumn: '1 / -1' }}>
+          <h3 style={{ fontSize: '1.15rem', fontWeight: '700', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Clock size={20} style={{ color: 'var(--status-on-time)' }} />
+            <span>{isEn ? 'Manual Prayer Offsets (Minute Fine-Tuning)' : 'ضبط وتعديل الفارق الزمني لمواقيت الصلوات (بالدقائق)'}</span>
+            <span title={isEn ? 'Fine-tune minutes for each prayer to match your local mosque adhan exactly' : 'تعديل الدقائق بالزيادة أو النقصان لمطابقة أذان مسجدك المحلي بدقة'} style={{ display: 'inline-flex', alignItems: 'center', color: 'var(--text-muted)', cursor: 'help' }}>
+              <Info size={15} />
+            </span>
+          </h3>
+
+          <div
+            style={{
+              padding: '12px 16px',
+              backgroundColor: 'rgba(245, 158, 11, 0.08)',
+              border: '1px solid rgba(245, 158, 11, 0.22)',
+              borderRadius: 'var(--radius-md)',
+              marginBottom: '18px',
+              fontSize: '0.84rem',
+              color: 'var(--text-secondary)',
+              lineHeight: 1.6,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+            }}
+          >
+            <Info size={18} style={{ color: 'var(--status-late)', flexShrink: 0 }} />
+            <span>
+              {isEn
+                ? 'Notice: Prayer times are astronomical estimates according to the selected calculation authority. If your local mosque adhan differs by a few minutes, you can enter the minute difference (+ or -) below to align the times perfectly.'
+                : 'تنبيه وإيضاح: مواقيت الصلاة معتمدة على الحسابات الفلكية للهيئة الرسمية المختارة وتعد أوقاتاً تقريبية بالنسبة لمسجدك. إذا كان أذان المسجد يتقدم أو يتأخر بعدة دقائق، يمكنك إدخال الفارق (+ أو - بالدقائق) لمطابقة أذان المسجد بدقة تامة.'}
+            </span>
+          </div>
+
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))',
+              gap: '12px',
+            }}
+          >
+            {[
+              { id: 'Fajr', nameAr: 'الفجر', nameEn: 'Fajr' },
+              { id: 'Sunrise', nameAr: 'الشروق', nameEn: 'Sunrise' },
+              { id: 'Dhuhr', nameAr: 'الظهر', nameEn: 'Dhuhr' },
+              { id: 'Asr', nameAr: 'العصر', nameEn: 'Asr' },
+              { id: 'Maghrib', nameAr: 'المغرب', nameEn: 'Maghrib' },
+              { id: 'Isha', nameAr: 'العشاء', nameEn: 'Isha' },
+            ].map((p) => {
+              const currentOffset = Number(settings.prayerOffsets?.[p.id]) || 0;
+              return (
+                <div
+                  key={p.id}
+                  style={{
+                    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+                    border: '1px solid var(--border-subtle)',
+                    borderRadius: 'var(--radius-md)',
+                    padding: '12px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    gap: '8px',
+                  }}
+                >
+                  <span style={{ fontSize: '0.88rem', fontWeight: '700', color: 'var(--text-primary)' }}>
+                    {isEn ? p.nameEn : p.nameAr}
+                  </span>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <button
+                      type="button"
+                      onClick={() => handlePrayerOffsetChange(p.id, currentOffset - 1)}
+                      style={{
+                        width: '28px',
+                        height: '28px',
+                        borderRadius: '50%',
+                        backgroundColor: 'rgba(255, 255, 255, 0.08)',
+                        border: '1px solid var(--border-subtle)',
+                        color: 'var(--text-primary)',
+                        fontWeight: '700',
+                        fontSize: '1rem',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                      title={isEn ? 'Decrease by 1 minute' : 'إنقاص دقيقة'}
+                    >
+                      -
+                    </button>
+
+                    <span
+                      style={{
+                        minWidth: '42px',
+                        textAlign: 'center',
+                        fontSize: '0.92rem',
+                        fontWeight: '800',
+                        color: currentOffset === 0 ? 'var(--text-muted)' : (currentOffset > 0 ? 'var(--status-on-time)' : 'var(--status-late)'),
+                        fontFamily: 'monospace',
+                      }}
+                    >
+                      {currentOffset > 0 ? `+${currentOffset}` : currentOffset} {isEn ? 'm' : 'د'}
+                    </span>
+
+                    <button
+                      type="button"
+                      onClick={() => handlePrayerOffsetChange(p.id, currentOffset + 1)}
+                      style={{
+                        width: '28px',
+                        height: '28px',
+                        borderRadius: '50%',
+                        backgroundColor: 'rgba(255, 255, 255, 0.08)',
+                        border: '1px solid var(--border-subtle)',
+                        color: 'var(--text-primary)',
+                        fontWeight: '700',
+                        fontSize: '1rem',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                      title={isEn ? 'Increase by 1 minute' : 'زيادة دقيقة'}
+                    >
+                      +
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
 
@@ -858,11 +1239,25 @@ export default function SettingsView({ onSettingsSaved }) {
             </label>
             <div style={{ position: 'relative' }}>
               <input
-                type={showGeminiKey ? 'text' : 'password'}
+                type="search"
                 className="form-input"
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="off"
+                spellCheck="false"
+                data-lpignore="true"
+                data-1p-ignore="true"
+                data-form-type="other"
+                name="gemini_key_token_query"
                 placeholder="AIzaSy..."
-                value={settings.geminiApiKey || ''}
-                onChange={(e) => handleInputChange('geminiApiKey', e.target.value)}
+                value={showGeminiKey ? (settings.geminiApiKey || '') : (settings.geminiApiKey ? '••••••••••••••••••••••••••••••••' : '')}
+                onFocus={() => {
+                  if (!showGeminiKey && settings.geminiApiKey) setShowGeminiKey(true);
+                }}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  handleInputChange('geminiApiKey', val);
+                }}
                 id="input-gemini-key"
               />
               <button
@@ -897,11 +1292,25 @@ export default function SettingsView({ onSettingsSaved }) {
             </label>
             <div style={{ position: 'relative' }}>
               <input
-                type={showTavilyKey ? 'text' : 'password'}
+                type="search"
                 className="form-input"
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="off"
+                spellCheck="false"
+                data-lpignore="true"
+                data-1p-ignore="true"
+                data-form-type="other"
+                name="tavily_key_token_query"
                 placeholder="tvly-..."
-                value={settings.tavilyApiKey || ''}
-                onChange={(e) => handleInputChange('tavilyApiKey', e.target.value)}
+                value={showTavilyKey ? (settings.tavilyApiKey || '') : (settings.tavilyApiKey ? '••••••••••••••••••••••••••••••••' : '')}
+                onFocus={() => {
+                  if (!showTavilyKey && settings.tavilyApiKey) setShowTavilyKey(true);
+                }}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  handleInputChange('tavilyApiKey', val);
+                }}
                 id="input-tavily-key"
               />
               <button
@@ -942,6 +1351,13 @@ export default function SettingsView({ onSettingsSaved }) {
             <input
               type="text"
               className="form-input"
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="off"
+              spellCheck="false"
+              data-lpignore="true"
+              data-form-type="other"
+              name="prayer_source_url_field"
               value={settings.prayerSourceUrl || ''}
               onChange={(e) => handleInputChange('prayerSourceUrl', e.target.value)}
               placeholder={isEn ? 'e.g. https://timesprayer.com/' : 'مثال: https://timesprayer.com/'}
@@ -1242,30 +1658,57 @@ export default function SettingsView({ onSettingsSaved }) {
             </button>
           </div>
         </div>
+
+        {/* Full Schedule Table Modal */}
+        <ScheduleTableModal
+          isOpen={showScheduleModal}
+          onClose={() => setShowScheduleModal(false)}
+          scheduleData={scheduleCache}
+          isEn={isEn}
+          is12HourFormat={(settings.timeFormat || '12') === '12'}
+        />
       </div>
     </div>
   );
 }
 
-function SearchableSelect({ label, value, options, onChange, placeholder, searchPlaceholder, icon: IconComp, isEn }) {
+function SearchableSelect({ label, value, options, onChange, placeholder, searchPlaceholder, icon: IconComp, isEn, isLoading }) {
   const [isOpen, setIsOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
 
-  const filteredOptions = options.filter((opt) =>
-    opt.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  // Find displayed label if value is an id/value in an object list
+  const currentObj = (Array.isArray(options) ? options : []).find((opt) => {
+    if (typeof opt === 'object' && opt !== null) {
+      const optVal = opt.id ?? opt.value;
+      const optLbl = opt.label ?? opt.name;
+      if (optVal === value || optLbl === value) return true;
+      if (typeof optVal === 'string' && typeof value === 'string' && optVal.toLowerCase() === value.toLowerCase()) return true;
+      if (typeof optLbl === 'string' && typeof value === 'string' && optLbl.toLowerCase() === value.toLowerCase()) return true;
+      return false;
+    }
+    return opt === value || (typeof opt === 'string' && typeof value === 'string' && opt.toLowerCase() === value.toLowerCase());
+  });
+
+  const displayLabel = currentObj
+    ? (typeof currentObj === 'object' ? (currentObj.label || currentObj.name || currentObj.id) : currentObj)
+    : (value || placeholder);
+
+  const filteredOptions = (Array.isArray(options) ? options : []).filter((opt) => matchesStrictPrefix(opt, searchTerm));
 
   return (
     <div className="form-group" style={{ marginBottom: 0 }}>
-      <label className="form-label">{label}:</label>
+      {label && <label className="form-label">{label}:</label>}
       <div className="custom-select-container">
         <div
           className="custom-select-trigger"
-          onClick={() => setIsOpen(!isOpen)}
+          onClick={() => {
+            if (!isLoading) setIsOpen(!isOpen);
+          }}
+          style={{ opacity: isLoading ? 0.7 : 1, cursor: isLoading ? 'wait' : 'pointer' }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            {IconComp && <IconComp size={16} style={{ color: 'var(--status-on-time)' }} />}
-            <span>{value || placeholder}</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {IconComp && <IconComp size={16} style={{ color: 'var(--status-on-time)', flexShrink: 0 }} />}
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{displayLabel}</span>
           </div>
           <ChevronDown
             size={16}
@@ -1273,17 +1716,27 @@ function SearchableSelect({ label, value, options, onChange, placeholder, search
               transform: isOpen ? 'rotate(180deg)' : 'none',
               transition: 'transform 0.18s ease',
               color: 'var(--text-secondary)',
+              flexShrink: 0,
             }}
           />
         </div>
 
-        {isOpen && (
+        {isOpen && !isLoading && (
           <div className="custom-select-menu">
             <div style={{ position: 'relative', marginBottom: '8px' }}>
               <input
-                type="text"
+                type="search"
                 className="form-input"
                 style={{ [isEn ? 'paddingLeft' : 'paddingRight']: '32px', fontSize: '0.85rem' }}
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="off"
+                spellCheck="false"
+                data-lpignore="true"
+                data-1p-ignore="true"
+                data-form-type="other"
+                name="search"
+                aria-autocomplete="none"
                 placeholder={searchPlaceholder}
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
@@ -1292,22 +1745,28 @@ function SearchableSelect({ label, value, options, onChange, placeholder, search
               <Search size={14} style={{ position: 'absolute', [isEn ? 'left' : 'right']: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
             </div>
 
-            <div className="custom-select-options">
+            <div className="custom-select-options" style={{ maxHeight: '220px', overflowY: 'auto' }}>
               {filteredOptions.length > 0 ? (
-                filteredOptions.map((opt) => (
-                  <div
-                    key={opt}
-                    className={`custom-select-option ${value === opt ? 'active' : ''}`}
-                    onClick={() => {
-                      onChange(opt);
-                      setIsOpen(false);
-                      setSearchTerm('');
-                    }}
-                  >
-                    <span>{opt}</span>
-                    {value === opt && <Check size={14} />}
-                  </div>
-                ))
+                filteredOptions.map((opt, idx) => {
+                  const optVal = typeof opt === 'object' && opt !== null ? (opt.id ?? opt.value) : opt;
+                  const optText = typeof opt === 'object' && opt !== null ? (opt.label ?? opt.name) : opt;
+                  const isSelected = value === optVal;
+                  return (
+                    <div
+                      key={typeof optVal === 'string' ? optVal : idx}
+                      className={`custom-select-option ${isSelected ? 'active' : ''}`}
+                      onClick={() => {
+                        onChange(optVal);
+                        setIsOpen(false);
+                        setSearchTerm('');
+                      }}
+                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', padding: '8px 12px', fontSize: '0.84rem' }}
+                    >
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{optText}</span>
+                      {isSelected && <Check size={14} style={{ color: 'var(--status-on-time)', flexShrink: 0 }} />}
+                    </div>
+                  );
+                })
               ) : (
                 <div style={{ padding: '12px', fontSize: '0.82rem', color: 'var(--text-muted)', textAlign: 'center' }}>
                   {isEn ? 'No matching results' : 'لا توجد نتائج مطابقة'}

@@ -5,7 +5,9 @@ export default function LiveCountdown({ nextDateObj, timezone, language = 'ar' }
   const [countdownStr, setCountdownStr] = useState('');
 
   useEffect(() => {
-    if (!nextDateObj) return;
+    if (!nextDateObj || !(nextDateObj instanceof Date) || isNaN(nextDateObj.getTime())) {
+      return;
+    }
 
     const update = () => {
       if (document.hidden) return;
@@ -36,7 +38,9 @@ export default function LiveCountdown({ nextDateObj, timezone, language = 'ar' }
     };
   }, [nextDateObj, timezone]);
 
-  if (!countdownStr) return null;
+  if (!nextDateObj || !(nextDateObj instanceof Date) || isNaN(nextDateObj.getTime()) || !countdownStr) {
+    return null;
+  }
 
   return (
     <span style={{ fontSize: '0.8rem', opacity: 0.8 }}>

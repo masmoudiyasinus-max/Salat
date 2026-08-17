@@ -1,5 +1,5 @@
 import React from 'react';
-import { Calendar, BarChart3, MessageSquare, Settings, Compass, Eye, RefreshCw, Volume2, VolumeX } from 'lucide-react';
+import { Calendar, BarChart3, MessageSquare, BookOpen, Settings, Eye, RefreshCw, Volume2, VolumeX, Tv } from 'lucide-react';
 import { getTranslation } from '../services/i18n';
 
 export default function Header({
@@ -12,9 +12,11 @@ export default function Header({
   isAudioMuted,
   onToggleAudio,
   isWallpaperFocusMode,
+  onToggleBg,
 }) {
   const lang = settings?.language || 'ar';
   const t = (k, fb) => getTranslation(lang, k, fb);
+  const isMadinah = (settings?.bgMode || 'makkah') === 'madinah';
 
   const handleTabClick = (tab) => {
     if (isWallpaperFocusMode) return;
@@ -64,6 +66,19 @@ export default function Header({
         </button>
 
         <button
+          className={`nav-btn ${activeTab === 'books' ? 'active' : ''}`}
+          onClick={() => handleTabClick('books')}
+          id="nav-books-btn"
+          title={isWallpaperFocusMode ? t('navFocusModeDisabled', 'التنقل معطل أثناء وضع التركيز') : (lang === 'en' ? 'Book Reader & Daily Ward' : 'ورد القراءة وقارئ الكتب')}
+          style={{
+            opacity: isWallpaperFocusMode ? 0.35 : 1,
+            cursor: isWallpaperFocusMode ? 'not-allowed' : 'pointer',
+          }}
+        >
+          <BookOpen size={20} />
+        </button>
+
+        <button
           className={`nav-btn ${activeTab === 'settings' ? 'active' : ''}`}
           onClick={() => handleTabClick('settings')}
           id="nav-settings-btn"
@@ -76,9 +91,24 @@ export default function Header({
           <Settings size={20} />
         </button>
 
+        <div style={{ width: '100%', height: '1px', backgroundColor: 'rgba(255, 255, 255, 0.15)', margin: '4px 0' }} />
+
+        <button
+          className="nav-btn"
+          onClick={onToggleBg}
+          title={lang === 'en' ? 'Cycle through all backgrounds and wallpapers (Arrow Right / Left)' : 'التنقل بين كافة الخلفيات والصور (الأسهم يميناً / يساراً)'}
+          id="nav-toggle-bg-btn"
+          style={{
+            backgroundColor: 'rgba(255, 255, 255, 0.08)',
+            color: 'var(--status-on-time)',
+            border: '1px solid rgba(255, 255, 255, 0.25)',
+          }}
+        >
+          <Tv size={20} />
+        </button>
+
         {isLiveVideo && (
           <>
-            <div style={{ width: '100%', height: '1px', backgroundColor: 'rgba(255, 255, 255, 0.15)', margin: '4px 0' }} />
 
             <button
               className="nav-btn"
@@ -100,9 +130,9 @@ export default function Header({
               title={isAudioMuted ? t('navAudioUnmute', 'تشغيل صوت البث المباشر') : t('navAudioMute', 'كتم صوت البث المباشر')}
               id="nav-audio-btn"
               style={{
-                backgroundColor: isAudioMuted ? 'rgba(255, 255, 255, 0.05)' : 'rgba(16, 185, 129, 0.2)',
+                backgroundColor: isAudioMuted ? 'rgba(255, 255, 255, 0.05)' : 'rgba(255, 255, 255, 0.18)',
                 color: isAudioMuted ? 'var(--text-secondary)' : 'var(--status-on-time)',
-                border: isAudioMuted ? '1px solid rgba(255, 255, 255, 0.1)' : '1px solid rgba(16, 185, 129, 0.4)',
+                border: isAudioMuted ? '1px solid rgba(255, 255, 255, 0.1)' : '1px solid rgba(255, 255, 255, 0.35)',
               }}
             >
               {isAudioMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
@@ -114,9 +144,9 @@ export default function Header({
               title={t('navSyncLive', 'مباشر الآن: المزامنة الفورية مع البث المباشر')}
               id="nav-sync-live-btn"
               style={{
-                backgroundColor: 'rgba(16, 185, 129, 0.15)',
+                backgroundColor: 'rgba(255, 255, 255, 0.12)',
                 color: 'var(--status-on-time)',
-                border: '1px solid rgba(16, 185, 129, 0.3)',
+                border: '1px solid rgba(255, 255, 255, 0.25)',
               }}
             >
               <RefreshCw size={20} />
