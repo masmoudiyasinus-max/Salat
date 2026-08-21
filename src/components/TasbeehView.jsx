@@ -141,7 +141,15 @@ export default function TasbeehView({ settings, isActive = true }) {
     setTasbeehState(updated);
   }, [currentVisibleIndex, visibleAdhkar]);
 
-  // Handle Spacebar tap (strictly when TasbeehView is active and NOT inside an input or editable field)
+  const handleReset = useCallback((e) => {
+    if (e) e.stopPropagation();
+    if (!activeDhikr || activeDhikr.count <= 0) return;
+    const updated = resetDhikrCount(activeDhikr.id);
+    setTasbeehState(updated);
+    setTodayTotal(getTodayTotalTasbeehCount());
+  }, [activeDhikr]);
+
+  // Handle Spacebar tap & Backspace reset (strictly when TasbeehView is active and NOT inside an input or editable field)
   useEffect(() => {
     if (!isActive) return;
 
@@ -160,19 +168,14 @@ export default function TasbeehView({ settings, isActive = true }) {
       if (e.code === 'Space' || e.key === ' ') {
         e.preventDefault();
         handleIncrement();
+      } else if (e.code === 'Backspace' || e.key === 'Backspace') {
+        e.preventDefault();
+        handleReset();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isActive, handleIncrement]);
-
-  const handleReset = (e) => {
-    if (e) e.stopPropagation();
-    if (!activeDhikr || activeDhikr.count <= 0) return;
-    const updated = resetDhikrCount(activeDhikr.id);
-    setTasbeehState(updated);
-    setTodayTotal(getTodayTotalTasbeehCount());
-  };
+  }, [isActive, handleIncrement, handleReset]);
 
   const handleSelectDhikr = (id) => {
     const updated = setActiveDhikrId(id);
@@ -520,7 +523,7 @@ export default function TasbeehView({ settings, isActive = true }) {
               onClick={handleReset}
               disabled={currentCount <= 0}
               className="btn-secondary"
-              title={isEn ? 'Reset counter (instant 1-click)' : 'تصفير العداد فوراً بنقرة واحدة'}
+              title={isEn ? 'Reset counter (Backspace)' : 'تصفير العداد (Backspace)'}
               style={{
                 padding: '8px 22px',
                 fontSize: '0.86rem',

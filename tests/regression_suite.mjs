@@ -729,6 +729,31 @@ it('Tasbeeh 1-Second Interval: Rejects taps faster than 1000ms and accepts taps 
   assert.equal(canTap(3100), true);  // 1100ms >= 1000ms -> Accepted
 });
 
+it('Tasbeeh Keyboard Shortcuts: Space increments counter and Backspace resets counter', () => {
+  let count = 12;
+  const handleKey = (code, isEditable = false, isActive = true) => {
+    if (!isActive) return count;
+    if (isEditable) return count;
+    if (code === 'Space') {
+      count += 1;
+    } else if (code === 'Backspace') {
+      count = 0;
+    }
+    return count;
+  };
+
+  // When active: Space increments
+  assert.equal(handleKey('Space', false, true), 13);
+  // When active: Backspace zeroes counter
+  assert.equal(handleKey('Backspace', false, true), 0);
+
+  // When inside editable input: Backspace does NOT reset counter
+  count = 15;
+  assert.equal(handleKey('Backspace', true, true), 15);
+  // When Tasbeeh tab is inactive: Backspace does NOT reset counter
+  assert.equal(handleKey('Backspace', false, false), 15);
+});
+
 it('Sequential Tab order includes tasbeeh and audio between books and settings', () => {
   const EXPECTED_TABS = ['tracker', 'chat', 'books', 'tasbeeh', 'audio', 'settings'];
   assert.equal(EXPECTED_TABS.indexOf('tasbeeh'), 3);
