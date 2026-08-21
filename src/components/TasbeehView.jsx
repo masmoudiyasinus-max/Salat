@@ -18,6 +18,7 @@ import {
   SlidersHorizontal,
   Eye,
   EyeOff,
+  GripVertical,
 } from 'lucide-react';
 import TasbeehIcon from './TasbeehIcon.jsx';
 import {
@@ -29,6 +30,7 @@ import {
   updateDhikrTarget,
   toggleDhikrHidden,
   moveDhikr,
+  reorderDhikrByIndex,
   resetAdhkarToDefaults,
   setActiveDhikrId,
   getTodayTotalTasbeehCount,
@@ -42,6 +44,8 @@ export default function TasbeehView({ settings, isActive = true }) {
   const [isCompletedAnim, setIsCompletedAnim] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [draggedDhikrIndex, setDraggedDhikrIndex] = useState(null);
+  const [dragOverDhikrIndex, setDragOverDhikrIndex] = useState(null);
   const [customTextAr, setCustomTextAr] = useState('');
   const [customTextEn, setCustomTextEn] = useState('');
   const [customTarget, setCustomTarget] = useState('33');
@@ -186,6 +190,48 @@ export default function TasbeehView({ settings, isActive = true }) {
     if (e) e.stopPropagation();
     const updated = moveDhikr(id, direction);
     setTasbeehState(updated);
+  };
+
+  const handleDhikrDragStart = (e, index) => {
+    setDraggedDhikrIndex(index);
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = 'move';
+      try {
+        e.dataTransfer.setData('text/plain', String(index));
+      } catch {}
+    }
+  };
+
+  const handleDhikrDragOver = (e, index) => {
+    e.preventDefault();
+    if (e.dataTransfer) {
+      e.dataTransfer.dropEffect = 'move';
+    }
+    if (dragOverDhikrIndex !== index) {
+      setDragOverDhikrIndex(index);
+    }
+  };
+
+  const handleDhikrDragLeave = (e, index) => {
+    e.preventDefault();
+    if (dragOverDhikrIndex === index) {
+      setDragOverDhikrIndex(null);
+    }
+  };
+
+  const handleDhikrDrop = (e, targetIndex) => {
+    e.preventDefault();
+    if (draggedDhikrIndex !== null && draggedDhikrIndex !== targetIndex) {
+      const updated = reorderDhikrByIndex(draggedDhikrIndex, targetIndex);
+      setTasbeehState(updated);
+    }
+    setDraggedDhikrIndex(null);
+    setDragOverDhikrIndex(null);
+  };
+
+  const handleDhikrDragEnd = () => {
+    setDraggedDhikrIndex(null);
+    setDragOverDhikrIndex(null);
   };
 
   const handleToggleDhikrVisibility = (e, id) => {
@@ -897,6 +943,12 @@ export default function TasbeehView({ settings, isActive = true }) {
               </button>
             </div>
 
+            {/* Drag & Drop Reorder Tip */}
+            <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '6px', padding: '0 4px' }}>
+              <span>💡</span>
+              <span>{isEn ? 'Hold and drag any card to reorder' : 'يمكنك الضغط مطولاً والسحب (Hold & Drag) على أي إطار لإعادة ترتيبه'}</span>
+            </div>
+
             {/* Adhkar Items Table / List */}
             <div
               style={{
@@ -912,9 +964,18 @@ export default function TasbeehView({ settings, isActive = true }) {
             >
               {tasbeehState.adhkar.map((dhikr, idx) => {
                 const isHidden = Boolean(dhikr.isHidden);
+                const isBeingDragged = draggedDhikrIndex === idx;
+                const isDragOverTarget = dragOverDhikrIndex === idx;
+
                 return (
                   <div
                     key={dhikr.id}
+                    draggable={true}
+                    onDragStart={(e) => handleDhikrDragStart(e, idx)}
+                    onDragOver={(e) => handleDhikrDragOver(e, idx)}
+                    onDragLeave={(e) => handleDhikrDragLeave(e, idx)}
+                    onDrop={(e) => handleDhikrDrop(e, idx)}
+                    onDragEnd={handleDhikrDragEnd}
                     style={{
                       display: 'flex',
                       alignItems: 'center',
@@ -922,14 +983,44 @@ export default function TasbeehView({ settings, isActive = true }) {
                       gap: '10px',
                       padding: '10px 14px',
                       borderRadius: 'var(--radius-md)',
-                      backgroundColor: isHidden ? 'rgba(255, 255, 255, 0.02)' : 'rgba(255, 255, 255, 0.07)',
-                      border: isHidden ? '1px dashed rgba(255, 255, 255, 0.1)' : '1px solid rgba(255, 255, 255, 0.12)',
-                      opacity: isHidden ? 0.6 : 1,
-                      transition: 'all 0.2s ease',
+                      backgroundColor: isHidden
+                        ? 'rgba(255, 255, 255, 0.02)'
+                        : isDragOverTarget
+                        ? 'rgba(56, 189, 248, 0.15)'
+                        : 'rgba(255, 255, 255, 0.07)',
+                      border: isDragOverTarget
+                        ? '2px dashed var(--accent, #38bdf8)'
+                        : isHidden
+                        ? '1px dashed rgba(255, 255, 255, 0.1)'
+                        : '1px solid rgba(255, 255, 255, 0.12)',
+                      opacity: isBeingDragged ? 0.35 : isHidden ? 0.6 : 1,
+                      transform: isDragOverTarget ? 'scale(1.015)' : 'none',
+                      cursor: 'grab',
+                      transition: 'background-color 0.15s ease, border 0.15s ease, transform 0.15s ease, opacity 0.15s ease',
+                      userSelect: 'none',
                     }}
                   >
+                    {/* Drag Grip Handle */}
+                    <div
+                      title={isEn ? 'Hold and drag to reorder' : 'اضغط واسحب لإعادة الترتيب (Hold & Drag)'}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        color: 'var(--text-muted)',
+                        cursor: 'grab',
+                        padding: '4px 2px',
+                        flexShrink: 0,
+                      }}
+                    >
+                      <GripVertical size={16} />
+                    </div>
+
                     {/* Reorder Up/Down Controls */}
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', flexShrink: 0 }}>
+                    <div
+                      onMouseDown={(e) => e.stopPropagation()}
+                      style={{ display: 'flex', flexDirection: 'column', gap: '2px', flexShrink: 0 }}
+                    >
                       <button
                         type="button"
                         onClick={(e) => handleMoveDhikr(e, dhikr.id, 'up')}
@@ -969,6 +1060,7 @@ export default function TasbeehView({ settings, isActive = true }) {
                     {/* Visibility Toggle Button */}
                     <button
                       type="button"
+                      onMouseDown={(e) => e.stopPropagation()}
                       onClick={(e) => handleToggleDhikrVisibility(e, dhikr.id)}
                       className="nav-btn"
                       title={
@@ -1012,7 +1104,10 @@ export default function TasbeehView({ settings, isActive = true }) {
                     </div>
 
                     {/* Target / Ward Numeric Editor */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+                    <div
+                      onMouseDown={(e) => e.stopPropagation()}
+                      style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}
+                    >
                       <label style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', fontWeight: '600' }}>
                         {isEn ? 'Ward:' : 'الورد:'}
                       </label>
@@ -1023,6 +1118,7 @@ export default function TasbeehView({ settings, isActive = true }) {
                         value={dhikr.target || 33}
                         onChange={(e) => handleUpdateTarget(dhikr.id, e.target.value)}
                         className="form-input"
+                        draggable={false}
                         title={isEn ? 'Set target count (ward)' : 'حدد عدد الورد المستهدف'}
                         style={{
                           width: '74px',
@@ -1048,7 +1144,7 @@ export default function TasbeehView({ settings, isActive = true }) {
                             backgroundColor: 'rgba(239, 68, 68, 0.12)',
                           }}
                         >
-                          <Trash2 size={14} />
+                          <Trash2 size={15} />
                         </button>
                       )}
                     </div>

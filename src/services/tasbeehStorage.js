@@ -548,6 +548,37 @@ export function moveDhikr(dhikrId, direction) {
 }
 
 /**
+ * Reorders a dhikr from a source index to a destination index (for drag and drop / hold drag).
+ * @param {number} fromIndex
+ * @param {number} toIndex
+ */
+export function reorderDhikrByIndex(fromIndex, toIndex) {
+  const state = getTasbeehState();
+  if (
+    typeof fromIndex !== 'number' ||
+    typeof toIndex !== 'number' ||
+    fromIndex < 0 ||
+    fromIndex >= state.adhkar.length ||
+    toIndex < 0 ||
+    toIndex >= state.adhkar.length ||
+    fromIndex === toIndex
+  ) {
+    return state;
+  }
+
+  const reordered = [...state.adhkar];
+  const [moved] = reordered.splice(fromIndex, 1);
+  reordered.splice(toIndex, 0, moved);
+
+  const newState = {
+    ...state,
+    adhkar: reordered,
+  };
+
+  return saveTasbeehState(newState);
+}
+
+/**
  * Calculates grand total tasbeeh counts across all time.
  */
 export function getGrandTotalTasbeehCount() {

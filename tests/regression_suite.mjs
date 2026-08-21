@@ -69,6 +69,7 @@ import {
   updateDhikrTarget,
   toggleDhikrHidden,
   moveDhikr,
+  reorderDhikrByIndex,
   resetAdhkarToDefaults,
   setActiveDhikrId,
   getTodayTotalTasbeehCount,
@@ -712,6 +713,26 @@ it('Adhkar Reordering: moveDhikr moves items up and down and persists order', ()
   const movedDownState = moveDhikr('alhamdulillah', 'down');
   assert.equal(movedDownState.adhkar[0].id, 'subhanallah');
   assert.equal(movedDownState.adhkar[1].id, 'alhamdulillah');
+});
+
+it('Tasbeeh Drag & Drop Reordering: reorderDhikrByIndex moves items between arbitrary positions and persists', () => {
+  resetAdhkarToDefaults();
+  const initialState = getTasbeehState();
+  const firstId = initialState.adhkar[0].id;
+  const thirdId = initialState.adhkar[2].id;
+
+  // Drag index 0 to index 2
+  const reorderedState = reorderDhikrByIndex(0, 2);
+  assert.equal(reorderedState.adhkar[2].id, firstId);
+  assert.equal(reorderedState.adhkar[1].id, thirdId);
+
+  // Verify persistence in localStorage
+  const savedState = getTasbeehState();
+  assert.equal(savedState.adhkar[2].id, firstId);
+
+  // Drag back to top
+  const restoredState = reorderDhikrByIndex(2, 0);
+  assert.equal(restoredState.adhkar[0].id, firstId);
 });
 
 it('Tasbeeh 1-Second Interval: Rejects taps faster than 1000ms and accepts taps after 1000ms', () => {
