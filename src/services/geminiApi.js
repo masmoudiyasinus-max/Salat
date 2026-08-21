@@ -53,10 +53,10 @@ export async function fetchAvailableGeminiModels(geminiApiKey) {
           else if (modelName.includes('1.5')) s += 60;
           else s += 20;
 
-          if (modelName.includes('flash')) s += 15;
-          if (modelName.includes('lite')) s += 5;
-          if (modelName.includes('pro')) s -= 5;
-          if (modelName.includes('exp')) s -= 10;
+          if (modelName.includes('flash')) s += 20;
+          if (modelName.includes('lite')) s -= 5;
+          if (modelName.includes('pro')) s -= 10;
+          if (modelName.includes('exp')) s -= 15;
           return s;
         };
         return getScore(b) - getScore(a);
@@ -331,14 +331,14 @@ export async function sendGeminiChatMessage(
             system_instruction: {
               parts: [
                 {
-                  text: `${FIXED_SYSTEM_PROMPT_MUNEER}\n\n${formatAppContextForPrompt()}`,
+                  text: `${FIXED_SYSTEM_PROMPT_MUNEER}\n\n${await formatAppContextForPrompt()}`,
                 },
               ],
             },
             contents: contents,
             generationConfig: {
               temperature: 0.7,
-              maxOutputTokens: 1200,
+              maxOutputTokens: 8192,
             },
           }),
         }
@@ -511,6 +511,75 @@ ${assistantResponse ? `مقتطف من الإجابة: "${assistantResponse.slic
 }
 
 /**
+ * Uses Gemini AI to analyze the multi-turn conversation context (after 5 responses)
+ * and determine the primary, comprehensive, and accurate title for the discussion.
+ */
+export async function generateSessionContextualTitle(geminiApiKey, messages = []) {
+  if (!geminiApiKey || !geminiApiKey.trim() || !Array.isArray(messages) || messages.length === 0) return null;
+
+  try {
+    const dialogSummary = messages
+      .filter((m) => m && (m.sender === 'user' || m.sender === 'assistant') && m.text)
+      .slice(0, 10)
+      .map((m) => `${m.sender === 'user' ? 'المستخدم' : 'الشيخ منير'}: ${String(m.text).slice(0, 200)}`)
+      .join('\n');
+
+    if (!dialogSummary.trim()) return null;
+
+    const prompt = `أنت مساعد ذكي لتسمية وتصنيف المحادثات.
+المطلوب: بعد دراسة وفهم سياق الحوار المتبادل التالي، ولّد "العنوان الأساسي النهائي" للمحادثة (من كلمتين إلى 4 كلمات بليغة كحد أقصى) يعكس جوهر الموضوع المشترك بدقة واحترافية.
+ممنوع كتابة أي مقدمات أو علامات تنصيص أو شروحات. أخرج العنوان فقط.
+
+سياق الحوار:
+${dialogSummary}
+
+العنوان الأساسي:`;
+
+    const dynamicModels = await fetchAvailableGeminiModels(geminiApiKey);
+
+    for (const model of dynamicModels) {
+      try {
+        const response = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{ role: 'user', parts: [{ text: prompt }] }],
+              generationConfig: {
+                temperature: 0.3,
+                maxOutputTokens: 30,
+              },
+            }),
+          }
+        );
+
+        if (response.ok) {
+          const data = await response.json();
+          const rawTitle = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+          if (rawTitle) {
+            let cleanTitle = rawTitle
+              .replace(/^["'«“`*#]+|["'»”`*#]+$/g, '')
+              .replace(/^(العنوان|عنوان المحادثة|الموضوع|العنوان الأساسي):\s*/i, '')
+              .replace(/[\r\n]+/g, ' ')
+              .trim();
+
+            if (cleanTitle.length >= 2 && cleanTitle.length <= 40) {
+              return cleanTitle;
+            }
+          }
+        }
+      } catch (e) {
+        console.warn(`Model ${model} contextual title generation failed, trying next:`, e);
+      }
+    }
+  } catch (err) {
+    console.warn('تنبيه: فشل توليد العنوان الأساسي للمحادثة:', err);
+  }
+  return null;
+}
+
+/**
  * Uses Gemini to correct spelling and typographical errors without altering words, semantics, or adding prefixes.
  */
 export async function correctSpellingText(geminiApiKey, text) {
@@ -576,4 +645,76 @@ export async function correctSpellingText(geminiApiKey, text) {
     console.warn('تنبيه: فشل التدقيق الإملائي بواسطة النموذج:', err);
   }
   return text;
+}
+
+/**
+ * Sends a proactive signal cue to Sheikh Muneer and receives a concise, wise, contextual response.
+ */
+export async function sendMuneerSignalPrompt(geminiApiKey, cuePromptText) {
+  if (!geminiApiKey || !geminiApiKey.trim()) {
+    return { success: false, error: 'Gemini API Key missing' };
+  }
+
+  const dynamicModels = await fetchAvailableGeminiModels(geminiApiKey);
+  const appContextStr = await formatAppContextForPrompt();
+
+  for (const model of dynamicModels) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 18000);
+
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            system_instruction: {
+              parts: [
+                {
+                  text: `${FIXED_SYSTEM_PROMPT_MUNEER}\n\n${appContextStr}`,
+                },
+              ],
+            },
+            contents: [
+              {
+                role: 'user',
+                parts: [{ text: cuePromptText }],
+              },
+            ],
+            generationConfig: {
+              temperature: 0.95,
+              topP: 0.95,
+              maxOutputTokens: 2048,
+            },
+          }),
+          signal: controller.signal,
+        }
+      );
+
+      clearTimeout(timeoutId);
+
+      if (response.ok) {
+        const data = await response.json();
+        const parts = data.candidates?.[0]?.content?.parts || [];
+        const rawText = parts
+          .filter((p) => typeof p.text === 'string')
+          .map((p) => p.text)
+          .join('')
+          .trim();
+
+        if (rawText) {
+          return {
+            success: true,
+            text: rawText,
+            modelUsed: model,
+          };
+        }
+      }
+    } catch (e) {
+      console.warn(`[MuneerSignal] Model ${model} failed, trying next:`, e);
+    }
+  }
+
+  return { success: false, error: 'All models failed to generate response' };
 }

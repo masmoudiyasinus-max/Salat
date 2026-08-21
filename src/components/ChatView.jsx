@@ -1,7 +1,7 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import ReactDOM from 'react-dom';
 import {
   Send,
-  Bot,
   User,
   Sparkles,
   MessageSquare,
@@ -26,9 +26,13 @@ import {
   Pause,
   Play,
   SpellCheck,
+  Clock,
+  Lock,
+  AlertTriangle,
 } from 'lucide-react';
 import {
   getChatSessions,
+  saveChatSessions,
   getActiveSessionId,
   saveActiveSessionId,
   createNewSession,
@@ -39,157 +43,11 @@ import {
   getSettings,
   compressImageFile,
 } from '../services/storage';
-import { sendGeminiChatMessage, generateSessionTitle, correctSpellingText } from '../services/geminiApi';
+import { sendGeminiChatMessage, generateSessionTitle, generateSessionContextualTitle, correctSpellingText } from '../services/geminiApi';
 import { extractMuneerAction, executeSettingsActionDirectly } from '../services/muneerActions';
 import { APP_EVENTS } from '../services/prayerConstants';
-
-function parseInlineMarkdownStatic(text) {
-  if (!text) return '';
-
-  const parts = [];
-  const regex = /(\*\*.*?\*\*|\*.*?\*|`.*?`|\[.*?\]\(.*?\))/g;
-  let lastIndex = 0;
-  let match;
-
-  while ((match = regex.exec(text)) !== null) {
-    if (match.index > lastIndex) {
-      parts.push(text.slice(lastIndex, match.index));
-    }
-
-    const token = match[0];
-    if (token.startsWith('**') && token.endsWith('**')) {
-      parts.push(
-        <strong key={match.index} style={{ fontWeight: '800', color: '#ffffff' }}>
-          {token.slice(2, -2)}
-        </strong>
-      );
-    } else if (token.startsWith('*') && token.endsWith('*')) {
-      parts.push(
-        <em key={match.index} style={{ fontStyle: 'italic', color: 'var(--text-primary)' }}>
-          {token.slice(1, -1)}
-        </em>
-      );
-    } else if (token.startsWith('`') && token.endsWith('`')) {
-      parts.push(
-        <code key={match.index} style={{ backgroundColor: 'rgba(255, 255, 255, 0.08)', padding: '2px 6px', borderRadius: '4px', fontSize: '0.88em', color: 'var(--status-on-time)' }}>
-          {token.slice(1, -1)}
-        </code>
-      );
-    } else if (token.startsWith('[') && token.includes('](')) {
-      const labelMatch = token.match(/\[(.*?)\]\((.*?)\)/);
-      if (labelMatch) {
-        parts.push(
-          <a key={match.index} href={labelMatch[2]} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-blue)', textDecoration: 'underline' }}>
-            {labelMatch[1]}
-          </a>
-        );
-      }
-    }
-
-    lastIndex = regex.lastIndex;
-  }
-
-  if (lastIndex < text.length) {
-    parts.push(text.slice(lastIndex));
-  }
-
-  return parts;
-}
-
-function parseInlineMarkdown(text, isTyping = false) {
-  if (!text) return '';
-  if (!isTyping) return parseInlineMarkdownStatic(text);
-
-  const tokens = text.split(/(\s+)/);
-  return tokens.map((w, idx) => {
-    if (!w) return null;
-    if (/^\s+$/.test(w)) return <span key={idx}>{w}</span>;
-    return (
-      <span key={idx} className="word-fade-in">
-        {parseInlineMarkdownStatic(w)}
-      </span>
-    );
-  });
-}
-
-function formatMarkdownText(rawText, isTyping = false) {
-  if (!rawText) return null;
-
-  // Pre-normalize squished list items like " 1. **" or " 2. **" that have no newlines before them
-  const text = String(rawText)
-    .replace(/([^\n])\s+(\d+\.\s+\*\*)/g, '$1\n\n$2')
-    .replace(/([^\n])\s+(\d+\.\s+[^\d\s])/g, '$1\n$2');
-
-  const lines = text.split('\n');
-  const elements = [];
-
-  lines.forEach((line, lineIdx) => {
-    const trimmed = line.trim();
-
-    if (trimmed.startsWith('### ')) {
-      elements.push(
-        <h4 key={lineIdx} style={{ fontSize: '1.05rem', fontWeight: '800', margin: '12px 0 6px 0', color: 'var(--status-on-time)' }}>
-          {parseInlineMarkdown(trimmed.slice(4), isTyping)}
-        </h4>
-      );
-      return;
-    }
-    if (trimmed.startsWith('## ')) {
-      elements.push(
-        <h3 key={lineIdx} style={{ fontSize: '1.15rem', fontWeight: '800', margin: '14px 0 8px 0', color: '#ffffff' }}>
-          {parseInlineMarkdown(trimmed.slice(3), isTyping)}
-        </h3>
-      );
-      return;
-    }
-    if (trimmed.startsWith('# ')) {
-      elements.push(
-        <h2 key={lineIdx} style={{ fontSize: '1.25rem', fontWeight: '900', margin: '16px 0 10px 0', color: '#ffffff' }}>
-          {parseInlineMarkdown(trimmed.slice(2), isTyping)}
-        </h2>
-      );
-      return;
-    }
-
-    // Numbered list: "1. ", "2. ", etc.
-    const numMatch = trimmed.match(/^(\d+)\.\s+(.*)$/);
-    if (numMatch) {
-      elements.push(
-        <div key={lineIdx} style={{ display: 'flex', gap: '8px', margin: '6px 0', alignItems: 'flex-start', lineHeight: '1.65' }}>
-          <span style={{ fontWeight: '800', color: 'var(--status-on-time)', minWidth: '22px' }}>{numMatch[1]}.</span>
-          <span style={{ flex: 1 }}>{parseInlineMarkdown(numMatch[2], isTyping)}</span>
-        </div>
-      );
-      return;
-    }
-
-    // Bullet list: "- ", "* "
-    if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
-      elements.push(
-        <div key={lineIdx} style={{ display: 'flex', gap: '8px', margin: '4px 0', alignItems: 'flex-start', lineHeight: '1.65' }}>
-          <span style={{ color: 'var(--status-on-time)', fontWeight: 'bold' }}>•</span>
-          <span style={{ flex: 1 }}>{parseInlineMarkdown(trimmed.slice(2), isTyping)}</span>
-        </div>
-      );
-      return;
-    }
-
-    // Empty line -> spacing
-    if (!trimmed) {
-      elements.push(<div key={lineIdx} style={{ height: '6px' }} />);
-      return;
-    }
-
-    // Regular paragraph
-    elements.push(
-      <p key={lineIdx} style={{ margin: '4px 0', lineHeight: '1.7' }}>
-        {parseInlineMarkdown(line, isTyping)}
-      </p>
-    );
-  });
-
-  return elements;
-}
+import { getDailySuggestions, ensureDailySuggestions } from '../services/dailySuggestionsService';
+import { formatMarkdownText, parseInlineMarkdown } from '../services/markdownFormatter';
 
 function insertFileChipToEditor(editorEl, fileObj, attachedFilesMapRef, setHasContent) {
   if (!editorEl) return;
@@ -511,7 +369,7 @@ function FilePreviewItem({ file, onRemove, onPreview, compact = false }) {
             borderRadius: '8px',
             overflow: 'hidden',
             border: '1px solid rgba(255, 255, 255, 0.25)',
-            backgroundColor: 'rgba(15, 23, 42, 0.95)',
+            backgroundColor: 'rgba(10, 10, 10, 0.88)',
             flexShrink: 0,
             display: 'inline-flex',
             cursor: 'pointer',
@@ -622,7 +480,7 @@ function FilePreviewItem({ file, onRemove, onPreview, compact = false }) {
           overflow: 'hidden',
           border: '1px solid rgba(255, 255, 255, 0.22)',
           boxShadow: '0 8px 20px rgba(0, 0, 0, 0.65)',
-          backgroundColor: 'rgba(15, 23, 42, 0.95)',
+          backgroundColor: 'rgba(10, 10, 10, 0.88)',
           flexShrink: 0,
           cursor: 'pointer',
           transition: 'all 0.15s ease',
@@ -675,7 +533,7 @@ function FilePreviewItem({ file, onRemove, onPreview, compact = false }) {
         height: '56px',
         maxWidth: '190px',
         borderRadius: '12px',
-        backgroundColor: 'rgba(15, 23, 42, 0.95)',
+        backgroundColor: 'rgba(10, 10, 10, 0.88)',
         border: '1px solid rgba(255, 255, 255, 0.20)',
         boxShadow: '0 8px 20px rgba(0, 0, 0, 0.65)',
         padding: '8px 12px',
@@ -747,11 +605,35 @@ function FilePreviewItem({ file, onRemove, onPreview, compact = false }) {
 
 
 
-export default function ChatView({ settings, onNavigateToSettings, onSettingsSaved }) {
+const CHAT_AWAY_RESET_TIMEOUT_MS = 2 * 60 * 1000; // 2 minutes (120,000 ms)
+const LAST_LEFT_CHAT_STORAGE_KEY = 'prayer_tracker_last_left_chat_time';
+
+export default function ChatView({ settings, onNavigateToSettings, onSettingsSaved, isActive = true, isOnline: propIsOnline }) {
   const lang = settings?.language || 'ar';
   const isEn = lang === 'en';
 
+  const [isOnline, setIsOnline] = useState(() => (propIsOnline !== undefined ? propIsOnline : (typeof navigator !== 'undefined' ? navigator.onLine : true)));
+
+  useEffect(() => {
+    if (propIsOnline !== undefined) {
+      setIsOnline(propIsOnline);
+    }
+  }, [propIsOnline]);
+
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
   const [sessions, setSessions] = useState(() => getChatSessions());
+  const [dailySuggestions, setDailySuggestions] = useState(() => getDailySuggestions(lang));
+  const [isGeneratingSuggestions, setIsGeneratingSuggestions] = useState(false);
   const [activeSessionId, setActiveSessionIdState] = useState(() => {
     const id = getActiveSessionId();
     const list = getChatSessions();
@@ -759,10 +641,158 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
     return list[0]?.id || '';
   });
 
+  // Sync daily suggestions from storage events
+  useEffect(() => {
+    const handleSuggestionsUpdate = (e) => {
+      if (e.detail?.suggestions && Array.isArray(e.detail.suggestions)) {
+        setDailySuggestions(e.detail.suggestions);
+        setIsGeneratingSuggestions(false);
+      }
+    };
+    window.addEventListener('prayer_tracker_suggestions_updated', handleSuggestionsUpdate);
+    return () => window.removeEventListener('prayer_tracker_suggestions_updated', handleSuggestionsUpdate);
+  }, []);
+
+  // System trigger: Request fresh suggestions from the model once per day in background
+  useEffect(() => {
+    const currentApiKey = (settings?.geminiApiKey || getSettings()?.geminiApiKey || '').trim();
+    const cached = getDailySuggestions(lang);
+    if (cached && cached.length > 0) {
+      setDailySuggestions(cached);
+      setIsGeneratingSuggestions(false);
+    } else if (currentApiKey) {
+      setIsGeneratingSuggestions(true);
+      ensureDailySuggestions(currentApiKey, lang)
+        .then((res) => {
+          if (Array.isArray(res) && res.length > 0) {
+            setDailySuggestions(res);
+          }
+        })
+        .catch(() => {})
+        .finally(() => {
+          setIsGeneratingSuggestions(false);
+        });
+    } else {
+      setIsGeneratingSuggestions(false);
+    }
+  }, [settings?.geminiApiKey, lang]);
+
   const validSessions = Array.isArray(sessions) && sessions.length > 0 ? sessions : getChatSessions();
   const activeSession = validSessions.find((s) => s.id === activeSessionId) || validSessions[0] || {};
   const messages = Array.isArray(activeSession.messages) ? activeSession.messages : [];
   const isCurrentChatEmpty = !messages.some((m) => m && m.sender === 'user');
+
+  const lastChatActivityTimeRef = useRef(() => {
+    try {
+      const stored = localStorage.getItem(LAST_LEFT_CHAT_STORAGE_KEY);
+      return stored ? parseInt(stored, 10) : Date.now();
+    } catch {
+      return Date.now();
+    }
+  });
+
+  const recordChatActivity = useCallback(() => {
+    const now = Date.now();
+    lastChatActivityTimeRef.current = now;
+    try {
+      localStorage.setItem(LAST_LEFT_CHAT_STORAGE_KEY, String(now));
+    } catch {
+      // Ignore
+    }
+  }, []);
+
+  // Track user presence and inactivity in the AI chat view:
+  // If > 2 minutes of inactivity elapse while away or returning to chat, return to the clean initial new-chat screen.
+  // If user is actively present in the chat page, their ongoing interactions refresh the timer.
+  useEffect(() => {
+    if (isActive) {
+      const lastActivity = typeof lastChatActivityTimeRef.current === 'function' ? lastChatActivityTimeRef.current() : lastChatActivityTimeRef.current;
+      const now = Date.now();
+
+      // Check if > 2 minutes of total inactivity passed since last interaction
+      if (lastActivity > 0 && now - lastActivity >= CHAT_AWAY_RESET_TIMEOUT_MS) {
+        const currentMsgs = Array.isArray(activeSession?.messages) ? activeSession.messages : [];
+        const hasUserMsgs = currentMsgs.some((m) => m && m.sender === 'user');
+
+        if (hasUserMsgs) {
+          try {
+            const { newSession, sessions: updated } = createNewSession();
+            setSessions(updated);
+            setActiveSessionIdState(newSession.id);
+          } catch (err) {
+            console.error('Error auto-creating new chat session after 2m inactivity:', err);
+          }
+        }
+      }
+
+      // Refresh activity timestamp now that user is active
+      recordChatActivity();
+    } else {
+      // Record current timestamp when leaving the chat page
+      recordChatActivity();
+    }
+  }, [isActive, activeSession?.messages, recordChatActivity]);
+
+  // Keep activity timestamp updated while user is interacting inside the chat page
+  useEffect(() => {
+    if (!isActive) return;
+
+    let lastThrottle = 0;
+    const handleUserInteraction = () => {
+      const now = Date.now();
+      if (now - lastThrottle >= 3000) {
+        // Throttle updates to once every 3 seconds
+        lastThrottle = now;
+        recordChatActivity();
+      }
+    };
+
+    window.addEventListener('mousemove', handleUserInteraction, { passive: true });
+    window.addEventListener('keydown', handleUserInteraction, { passive: true });
+    window.addEventListener('touchstart', handleUserInteraction, { passive: true });
+    window.addEventListener('scroll', handleUserInteraction, { passive: true });
+
+    return () => {
+      window.removeEventListener('mousemove', handleUserInteraction);
+      window.removeEventListener('keydown', handleUserInteraction);
+      window.removeEventListener('touchstart', handleUserInteraction);
+      window.removeEventListener('scroll', handleUserInteraction);
+    };
+  }, [isActive, recordChatActivity]);
+
+  // Also handle browser tab visibility switching
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (!isActive) return;
+
+      if (document.visibilityState === 'hidden') {
+        recordChatActivity();
+      } else if (document.visibilityState === 'visible') {
+        const lastActivity = typeof lastChatActivityTimeRef.current === 'function' ? lastChatActivityTimeRef.current() : lastChatActivityTimeRef.current;
+        const now = Date.now();
+
+        if (lastActivity > 0 && now - lastActivity >= CHAT_AWAY_RESET_TIMEOUT_MS) {
+          const currentMsgs = Array.isArray(activeSession?.messages) ? activeSession.messages : [];
+          const hasUserMsgs = currentMsgs.some((m) => m && m.sender === 'user');
+
+          if (hasUserMsgs) {
+            try {
+              const { newSession, sessions: updated } = createNewSession();
+              setSessions(updated);
+              setActiveSessionIdState(newSession.id);
+            } catch (err) {
+              console.error('Error auto-creating new chat session after visibility timeout:', err);
+            }
+          }
+        }
+
+        recordChatActivity();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [isActive, activeSession?.messages, recordChatActivity]);
 
   const [editingMessageId, setEditingMessageId] = useState(null);
   const [editText, setEditText] = useState('');
@@ -861,7 +891,7 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages, isLoading, isStreaming]);
+  }, [messages.length, isLoading, isStreaming]);
 
   // Clean up typewriter and abort controller on unmount
   useEffect(() => {
@@ -911,6 +941,7 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
     setIsPaused(false);
 
     // 3. Finalize messages so whatever has been typed remains visible without typing cursor
+    let latestFinalMsgs = [];
     setSessions((prevSessions) => {
       return prevSessions.map((s) => {
         if (s.id === activeSession.id) {
@@ -918,6 +949,7 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
             m.isTyping ? { ...m, isTyping: false } : m
           );
           updateSessionMessages(s.id, finalized);
+          latestFinalMsgs = finalized;
           return { ...s, messages: finalized };
         }
         return s;
@@ -926,6 +958,16 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
 
     setIsLoading(false);
     setIsStreaming(false);
+
+    // Auto-trigger any queued pending message!
+    const pendingIdx = latestFinalMsgs.findIndex((m) => m && m.sender === 'user' && m.status === 'pending');
+    if (pendingIdx >= 0) {
+      const pendingMsg = latestFinalMsgs[pendingIdx];
+      const priorHistory = latestFinalMsgs.slice(0, pendingIdx);
+      setTimeout(() => {
+        handleProcessPendingMessage(pendingMsg, priorHistory);
+      }, 320);
+    }
   };
 
   // Typewriter streaming word-by-word effect for clean conversational text ONLY
@@ -999,6 +1041,16 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
         const saved = updateSessionMessages(activeSession.id, finalMsgs);
         setSessions([...saved]);
         setTimeout(scrollToBottom, 40);
+
+        // Auto-trigger next pending message in queue if any!
+        const nextPendingIdx = finalMsgs.findIndex((m) => m && m.sender === 'user' && m.status === 'pending');
+        if (nextPendingIdx >= 0) {
+          const nextPendingMsg = finalMsgs[nextPendingIdx];
+          const priorHistory = finalMsgs.slice(0, nextPendingIdx);
+          setTimeout(() => {
+            handleProcessPendingMessage(nextPendingMsg, priorHistory);
+          }, 350);
+        }
         return;
       }
 
@@ -1019,17 +1071,17 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
       );
       scrollToBottom();
 
-      // Natural human-like cadence (350ms - 550ms per word)
-      const minDelay = 350;
-      const maxDelay = 550;
+      // Natural responsive streaming cadence (20ms - 45ms per token/word)
+      const minDelay = 20;
+      const maxDelay = 45;
       let nextDelayMs = Math.floor(Math.random() * (maxDelay - minDelay + 1)) + minDelay;
 
-      // Punctuation pauses
+      // Subtle punctuation pauses for natural phrasing
       if (currentTokenIndex < totalTokens) {
         if (/[.؟?!…]/.test(currentToken)) {
-          nextDelayMs += 1000;
+          nextDelayMs += 100;
         } else if (/[،,؛;:]/.test(currentToken)) {
-          nextDelayMs += 600;
+          nextDelayMs += 50;
         }
       }
 
@@ -1083,6 +1135,26 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
       }
     } catch (e) {
       console.error('Error deleting session:', e);
+    }
+  };
+
+  const handleDeleteSessionById = (e, sessionId) => {
+    if (e) e.stopPropagation();
+    try {
+      if (validSessions.length <= 1) {
+        const updated = updateSessionMessages(sessionId, []);
+        setSessions([...updated]);
+        return;
+      }
+
+      const updated = deleteSession(sessionId);
+      setSessions(updated);
+      if (activeSession.id === sessionId && updated.length > 0) {
+        setActiveSessionIdState(updated[0].id);
+        saveActiveSessionId(updated[0].id);
+      }
+    } catch (err) {
+      console.error('Error deleting session by id:', err);
     }
   };
 
@@ -1180,12 +1252,51 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
         .map((s) => s.file);
     }
 
-    if ((!query.trim() && extractedFiles.length === 0) || isLoading) return;
+    if (!query.trim() && extractedFiles.length === 0) return;
+
+    if (!isOnline) {
+      setErrorMessage(
+        isEn
+          ? 'AI Chat is locked in offline mode. Please connect to the internet to chat with Sheikh Muneer.'
+          : 'محادثة الذكاء الاصطناعي مقفلة في وضع عدم الاتصال. يُرجى الاتصال بالإنترنت لبدء الحوار مع الشيخ منير.'
+      );
+      return;
+    }
 
     if (!hasGeminiKey) {
       setErrorMessage(
-        'مفتاح Gemini API غير مضاف. يُرجى الانتقال إلى الإعدادات وإدخال المفتاح أولاً.'
+        isEn
+          ? 'Gemini API Key is required. Please go to Settings to add your key.'
+          : 'مفتاح Gemini API غير مضاف. يُرجى الانتقال إلى الإعدادات وإدخال المفتاح أولاً.'
       );
+      return;
+    }
+
+    // 1. If AI is currently loading or streaming another response, queue as a Pending Message!
+    if (isLoading || isStreaming) {
+      const pendingUserMsg = {
+        id: Date.now().toString(),
+        sender: 'user',
+        text: query.trim() || 'تحليل المحتوى المرفق',
+        segments: extractedSegments,
+        attachedFiles: extractedFiles,
+        status: 'pending',
+        timestamp: new Date().toLocaleTimeString('ar-EG-u-nu-latn', {
+          hour: '2-digit',
+          minute: '2-digit',
+        }),
+      };
+
+      const newMessages = [...baseMessages, pendingUserMsg];
+      const updatedSessions = updateSessionMessages(activeSession.id, newMessages);
+      setSessions([...updatedSessions]);
+
+      // Clear editor
+      if (targetEditor) {
+        targetEditor.innerHTML = '';
+        setHasInputContent(false);
+      }
+      attachedFilesMapRef.current = {};
       return;
     }
 
@@ -1249,21 +1360,126 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
 
         streamAssistantResponse(rawText, newMessages, msgMetadata);
 
-        // Dynamically let the AI model determine and generate the conversation title
-        const currentSession = sessions.find((s) => s.id === activeSession.id);
-        const isDefaultTitle =
-          !currentSession?.title ||
-          currentSession.title.startsWith('محادثة جديدة') ||
-          currentSession.title.startsWith('محادثة رئيسية');
+        // Two-Stage Smart Titling Architecture:
+        // 1. Initial Title at 1st assistant response
+        // 2. Primary Permanent Title after 5 assistant responses based on deep conversational context
+        handleCheckAndGenerateSessionTitle(newMessages, rawText);
+      } else {
+        setErrorMessage(res?.error || 'حدث خطأ أثناء معالجة الطلب.');
+      }
+    } catch (err) {
+      abortControllerRef.current = null;
+      setIsLoading(false);
+      if (err.name !== 'AbortError') {
+        setErrorMessage(`حدث خطأ غير متوقع: ${err.message}`);
+      }
+    }
+  };
 
-        if (isDefaultTitle && settings.geminiApiKey) {
-          generateSessionTitle(settings.geminiApiKey, query || 'محادثة', rawText).then((aiTitle) => {
-            if (aiTitle) {
-              const updated = updateSessionTitle(activeSession.id, aiTitle);
-              setSessions([...updated]);
-            }
-          });
+  const handleCheckAndGenerateSessionTitle = (sessionMsgs, incomingAssistantText) => {
+    if (!settings?.geminiApiKey || !activeSession?.id) return;
+
+    const currentSession = validSessions.find((s) => s.id === activeSession.id) || activeSession;
+    if (currentSession.titleFinalized) return;
+
+    // Count assistant replies in the current session
+    const assistantRepliesCount = sessionMsgs.filter((m) => m && m.sender === 'assistant' && !m.isTyping).length + 1;
+
+    // Stage 1: Initial title at 1st assistant response
+    if (assistantRepliesCount === 1) {
+      const isDefaultTitle =
+        !currentSession?.title ||
+        currentSession.title.startsWith('محادثة جديدة') ||
+        currentSession.title.startsWith('محادثة رئيسية');
+
+      if (isDefaultTitle) {
+        const firstUser = sessionMsgs.find((m) => m && m.sender === 'user');
+        const userText = firstUser?.text || 'محادثة';
+        generateSessionTitle(settings.geminiApiKey, userText, incomingAssistantText).then((initialTitle) => {
+          if (initialTitle) {
+            const updated = updateSessionTitle(activeSession.id, initialTitle, false);
+            setSessions(Array.isArray(updated) ? [...updated] : getChatSessions());
+          }
+        });
+      }
+    }
+    // Stage 2: Primary permanent title after 5 assistant responses based on full multi-turn context
+    else if (assistantRepliesCount === 5) {
+      generateSessionContextualTitle(settings.geminiApiKey, sessionMsgs).then((primaryTitle) => {
+        if (primaryTitle) {
+          const updated = updateSessionTitle(activeSession.id, primaryTitle, true);
+          setSessions(Array.isArray(updated) ? [...updated] : getChatSessions());
         }
+      });
+    }
+  };
+
+  const handleCancelPendingMessage = (pendingMsgId) => {
+    setSessions((prevSessions) => {
+      return prevSessions.map((s) => {
+        if (s.id === activeSession.id) {
+          const filtered = (s.messages || []).filter((m) => m.id !== pendingMsgId);
+          updateSessionMessages(s.id, filtered);
+          return { ...s, messages: filtered };
+        }
+        return s;
+      });
+    });
+  };
+
+  const handleProcessPendingMessage = async (pendingMsg, priorHistory) => {
+    if (!pendingMsg || !hasGeminiKey) return;
+
+    // Convert pending message into active normal user message
+    const activeUserMsg = { ...pendingMsg, status: undefined };
+    const currentSessionMsgs = [...priorHistory, activeUserMsg];
+
+    setSessions((prevSessions) =>
+      prevSessions.map((s) => {
+        if (s.id === activeSession.id) {
+          updateSessionMessages(s.id, currentSessionMsgs);
+          return { ...s, messages: currentSessionMsgs };
+        }
+        return s;
+      })
+    );
+
+    setErrorMessage(null);
+    setIsLoading(true);
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    try {
+      const res = await sendGeminiChatMessage(
+        settings.geminiApiKey,
+        currentSessionMsgs,
+        activeUserMsg.text,
+        settings.tavilyApiKey,
+        activeUserMsg.attachedFiles || [],
+        controller.signal,
+        activeUserMsg.segments || []
+      );
+
+      abortControllerRef.current = null;
+      setIsLoading(false);
+
+      if (res && res.success) {
+        await new Promise((r) => setTimeout(r, 280));
+        const rawText = typeof res.text === 'string' ? res.text : String(res.text || '');
+        const msgMetadata = {
+          id: (Date.now() + 1).toString(),
+          sender: 'assistant',
+          usedSearch: Boolean(res.usedSearch),
+          durationSeconds: res.durationSeconds ? String(res.durationSeconds) : null,
+          timestamp: new Date().toLocaleTimeString('ar-EG-u-nu-latn', {
+            hour: '2-digit',
+            minute: '2-digit',
+          }),
+        };
+
+        streamAssistantResponse(rawText, currentSessionMsgs, msgMetadata);
+        handleCheckAndGenerateSessionTitle(currentSessionMsgs, rawText);
       } else {
         setErrorMessage(res?.error || 'حدث خطأ أثناء معالجة الطلب.');
       }
@@ -1470,34 +1686,6 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
 
   return (
     <div className="chat-view">
-      {!hasGeminiKey && (
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            backgroundColor: 'rgba(245, 158, 11, 0.08)',
-            border: '1px solid rgba(245, 158, 11, 0.2)',
-            borderRadius: 'var(--radius-pill)',
-            padding: '8px 20px',
-            marginBottom: '16px',
-            gap: '12px',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem', color: 'var(--status-late)' }}>
-            <AlertCircle size={16} />
-            <span>{isEn ? 'Gemini API Key is required to enable chat with Sheikh Muneer' : 'يلزم إضافة مفتاح Gemini API لتفعيل الدردشة مع الشيخ منير'}</span>
-          </div>
-          <button
-            className="btn-secondary"
-            style={{ fontSize: '0.78rem', padding: '4px 12px' }}
-            onClick={onNavigateToSettings}
-          >
-            <span>{isEn ? 'Go to Settings' : 'الانتقال للإعدادات'}</span>
-          </button>
-        </div>
-      )}
-
       <div className="chat-layout">
         {/* Hidden File Upload Input */}
         <input
@@ -1522,8 +1710,8 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
                 flexDirection: 'column',
                 alignItems: 'center',
                 justifyContent: 'center',
-                padding: '76px 48px',
-                gap: '36px',
+                padding: '48px 36px',
+                gap: '24px',
                 width: '100%',
               }}
             >
@@ -1554,149 +1742,226 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
               </div>
 
               {/* Centered Floating Capsule Input Bar (matching reference design) */}
-              <div
-                className="chat-input-capsule"
-                style={{
-                  width: 'min(100%, 740px)',
-                  minHeight: '54px',
-                  backgroundColor: 'rgba(15, 23, 42, 0.92)',
-                  border: '1px solid rgba(255, 255, 255, 0.16)',
-                  borderRadius: 'var(--radius-pill)',
-                  padding: '6px 8px 6px 14px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '10px',
-                  boxShadow: '0 16px 40px rgba(0, 0, 0, 0.55)',
-                  backdropFilter: 'blur(20px)',
-                  WebkitBackdropFilter: 'blur(20px)',
-                  transition: 'all 0.2s ease',
-                }}
-              >
-                {/* 1. Model Icon when empty, or Send Button when active */}
-                {hasInputContent ? (
+              {!isOnline ? (
+                <div
+                  className="chat-input-capsule"
+                  style={{
+                    width: 'min(100%, 740px)',
+                    minHeight: '54px',
+                    backgroundColor: 'rgba(18, 14, 2, 0.92)',
+                    border: '1px solid rgba(234, 179, 8, 0.4)',
+                    borderRadius: 'var(--radius-pill)',
+                    padding: '8px 20px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: '12px',
+                    boxShadow: '0 16px 40px rgba(0, 0, 0, 0.65)',
+                    backdropFilter: 'blur(20px)',
+                    WebkitBackdropFilter: 'blur(20px)',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: 'clamp(0.78rem, 1.4vw, 0.86rem)', color: '#fde047', fontWeight: '600', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flex: 1, minWidth: 0 }}>
+                    <AlertTriangle size={18} style={{ color: '#fde047', flexShrink: 0 }} />
+                    <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {isEn
+                        ? 'Warning: Internet disconnected — AI Chat is locked (History available)'
+                        : 'تحذير: انقطع الاتصال بالإنترنت — المحادثة مقفلة (تصفح السجل متاح)'}
+                    </span>
+                  </div>
+                  <div
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      fontSize: '0.78rem',
+                      color: '#fde047',
+                      padding: '4px 12px',
+                      borderRadius: 'var(--radius-pill)',
+                      backgroundColor: 'rgba(234, 179, 8, 0.15)',
+                      border: '1px solid rgba(234, 179, 8, 0.3)',
+                      whiteSpace: 'nowrap',
+                      fontWeight: '700',
+                    }}
+                  >
+                    <Lock size={13} />
+                    <span>{isEn ? 'Offline' : 'بدون إنترنت'}</span>
+                  </div>
+                </div>
+              ) : !hasGeminiKey ? (
+                <div
+                  className="chat-input-capsule"
+                  style={{
+                    width: 'min(100%, 740px)',
+                    minHeight: '54px',
+                    backgroundColor: 'rgba(10, 10, 10, 0.88)',
+                    border: '1px solid rgba(255, 255, 255, 0.16)',
+                    borderRadius: 'var(--radius-pill)',
+                    padding: '8px 16px 8px 20px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: '12px',
+                    boxShadow: '0 16px 40px rgba(0, 0, 0, 0.55)',
+                    backdropFilter: 'blur(20px)',
+                    WebkitBackdropFilter: 'blur(20px)',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem', color: 'var(--status-late)', fontWeight: '600' }}>
+                    <AlertCircle size={16} style={{ flexShrink: 0 }} />
+                    <span>{isEn ? 'Gemini API Key is required to enable chat with Sheikh Muneer' : 'يلزم إضافة مفتاح Gemini API لتفعيل الدردشة مع الشيخ منير'}</span>
+                  </div>
                   <button
                     type="button"
-                    className="btn-primary input-capsule-action"
-                    onClick={() => handleSend()}
+                    className="btn-secondary"
+                    style={{ fontSize: '0.80rem', padding: '6px 14px', borderRadius: 'var(--radius-pill)', whiteSpace: 'nowrap' }}
+                    onClick={onNavigateToSettings}
+                  >
+                    <span>{isEn ? 'Go to Settings' : 'الانتقال للإعدادات'}</span>
+                  </button>
+                </div>
+              ) : (
+                <div
+                  className="chat-input-capsule"
+                  style={{
+                    width: 'min(100%, 740px)',
+                    minHeight: '54px',
+                    backgroundColor: 'rgba(10, 10, 10, 0.88)',
+                    border: '1px solid rgba(255, 255, 255, 0.16)',
+                    borderRadius: 'var(--radius-pill)',
+                    padding: '6px 8px 6px 14px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '10px',
+                    boxShadow: '0 16px 40px rgba(0, 0, 0, 0.55)',
+                    backdropFilter: 'blur(20px)',
+                    WebkitBackdropFilter: 'blur(20px)',
+                    transition: 'all 0.2s ease',
+                  }}
+                >
+                  {/* 1. Model Icon when empty, or Send Button when active */}
+                  {hasInputContent ? (
+                    <button
+                      type="button"
+                      className="btn-primary input-capsule-action"
+                      onClick={() => handleSend()}
+                      style={{
+                        height: '40px',
+                        padding: '0 20px',
+                        borderRadius: 'var(--radius-pill)',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '6px',
+                        fontSize: '0.88rem',
+                        fontWeight: '700',
+                        flexShrink: 0,
+                      }}
+                      id="hero-send-btn"
+                    >
+                      <Send size={15} />
+                      <span>{isEn ? 'Send' : 'إرسال'}</span>
+                    </button>
+                  ) : (
+                    <div
+                      className="input-capsule-action"
+                      style={{
+                        width: '40px',
+                        height: '40px',
+                        borderRadius: '50%',
+                        backgroundColor: 'rgba(255, 255, 255, 0.07)',
+                        border: '1px solid rgba(255, 255, 255, 0.12)',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        color: '#ffffff',
+                        flexShrink: 0,
+                      }}
+                      title={isEn ? 'Sheikh Muneer AI' : 'الشيخ منير الذكي'}
+                    >
+                      <Sparkles size={18} />
+                    </div>
+                  )}
+
+                  {/* 2. Inline Rich Input Editor (Text & Images mix inline) */}
+                  <div
+                    ref={heroEditorRef}
+                    contentEditable={true}
+                    dir={isEn ? 'ltr' : 'rtl'}
+                    className="rich-chat-input"
+                    data-placeholder={isEn ? 'Ask Sheikh Muneer...' : 'إسأل الشيخ منير…'}
+                    onInput={(e) => {
+                      const hasAny =
+                        e.currentTarget.innerText.trim().length > 0 ||
+                        e.currentTarget.querySelectorAll('.inline-file-chip').length > 0;
+                      setHasInputContent(hasAny);
+                    }}
+                    onPaste={(e) =>
+                      handleEditorPaste(
+                        e,
+                        heroEditorRef.current,
+                        attachedFilesMapRef,
+                        setHasInputContent
+                      )
+                    }
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        handleSend();
+                      }
+                    }}
+                    id="hero-chat-input"
+                  />
+
+                  {/* 3. Model Indicator Badge */}
+                  <div
+                    className="input-capsule-model"
                     style={{
-                      height: '40px',
-                      padding: '0 20px',
-                      borderRadius: 'var(--radius-pill)',
+                      height: '32px',
                       display: 'inline-flex',
                       alignItems: 'center',
                       justifyContent: 'center',
                       gap: '6px',
-                      fontSize: '0.88rem',
-                      fontWeight: '700',
+                      padding: '0 12px',
+                      borderRadius: 'var(--radius-pill)',
+                      backgroundColor: 'rgba(255, 255, 255, 0.06)',
+                      border: '1px solid rgba(255, 255, 255, 0.10)',
+                      fontSize: '0.78rem',
+                      color: 'var(--text-secondary)',
+                      whiteSpace: 'nowrap',
                       flexShrink: 0,
-                      animation: 'previewFadeIn 0.2s ease-out',
                     }}
-                    id="hero-send-btn"
                   >
-                    <Send size={15} />
-                    <span>{isEn ? 'Send' : 'إرسال'}</span>
-                  </button>
-                ) : (
-                  <div
-                    className="input-capsule-action"
+                    <span>Muneer AI</span>
+                  </div>
+
+                  {/* 4. Attach File (+) Button */}
+                  <button
+                    type="button"
+                    className="input-capsule-attach"
                     style={{
-                      width: '40px',
-                      height: '40px',
-                      borderRadius: '50%',
-                      backgroundColor: 'rgba(255, 255, 255, 0.07)',
-                      border: '1px solid rgba(255, 255, 255, 0.12)',
+                      width: '38px',
+                      height: '38px',
+                      background: 'rgba(255, 255, 255, 0.06)',
+                      border: '1px solid rgba(255, 255, 255, 0.10)',
+                      color: 'var(--text-secondary)',
+                      cursor: 'pointer',
                       display: 'inline-flex',
                       alignItems: 'center',
                       justifyContent: 'center',
-                      color: 'var(--accent-blue)',
+                      padding: 0,
+                      borderRadius: '50%',
+                      transition: 'all 0.15s ease',
                       flexShrink: 0,
-                      animation: 'previewFadeIn 0.2s ease-out',
                     }}
-                    title={isEn ? 'Sheikh Muneer AI' : 'الشيخ منير الذكي'}
+                    onClick={() => fileInputRef.current?.click()}
+                    title={isEn ? 'Attach files or images' : 'إرفاق ملفات أو مستندات'}
+                    id="hero-attach-file-btn"
                   >
-                    <Sparkles size={18} />
-                  </div>
-                )}
-
-                {/* 2. Inline Rich Input Editor (Text & Images mix inline) */}
-                <div
-                  ref={heroEditorRef}
-                  contentEditable={!isLoading}
-                  dir={isEn ? 'ltr' : 'rtl'}
-                  className="rich-chat-input"
-                  data-placeholder={isEn ? 'Ask Sheikh Muneer...' : 'إسأل الشيخ منير…'}
-                  onInput={(e) => {
-                    const hasAny =
-                      e.currentTarget.innerText.trim().length > 0 ||
-                      e.currentTarget.querySelectorAll('.inline-file-chip').length > 0;
-                    setHasInputContent(hasAny);
-                  }}
-                  onPaste={(e) =>
-                    handleEditorPaste(
-                      e,
-                      heroEditorRef.current,
-                      attachedFilesMapRef,
-                      setHasInputContent
-                    )
-                  }
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                      e.preventDefault();
-                      handleSend();
-                    }
-                  }}
-                  id="hero-chat-input"
-                />
-
-                {/* 3. Model Indicator Badge */}
-                <div
-                  className="input-capsule-model"
-                  style={{
-                    height: '32px',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '6px',
-                    padding: '0 12px',
-                    borderRadius: 'var(--radius-pill)',
-                    backgroundColor: 'rgba(255, 255, 255, 0.06)',
-                    border: '1px solid rgba(255, 255, 255, 0.10)',
-                    fontSize: '0.78rem',
-                    color: 'var(--text-secondary)',
-                    whiteSpace: 'nowrap',
-                    flexShrink: 0,
-                  }}
-                >
-                  <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#38bdf8' }}></span>
-                  <span>Muneer AI</span>
+                    <Plus size={18} />
+                  </button>
                 </div>
-
-                {/* 4. Attach File (+) Button */}
-                <button
-                  type="button"
-                  className="input-capsule-attach"
-                  style={{
-                    width: '38px',
-                    height: '38px',
-                    background: 'rgba(255, 255, 255, 0.06)',
-                    border: '1px solid rgba(255, 255, 255, 0.10)',
-                    color: 'var(--text-secondary)',
-                    cursor: 'pointer',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    padding: 0,
-                    borderRadius: '50%',
-                    transition: 'all 0.15s ease',
-                    flexShrink: 0,
-                  }}
-                  onClick={() => fileInputRef.current?.click()}
-                  title={isEn ? 'Attach files or images' : 'إرفاق ملفات أو مستندات'}
-                  id="hero-attach-file-btn"
-                >
-                  <Plus size={18} />
-                </button>
-              </div>
+              )}
 
               {/* Disclaimer Note */}
               <div
@@ -1712,41 +1977,56 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
                 {isEn ? 'Sheikh Muneer may make mistakes. Please verify religious rulings.' : 'قد يرتكب الشيخ منير أخطاءً، لذا يُرجى التحقق من ردوده.'}
               </div>
 
-              {/* Quick Suggestion Prompt Cards */}
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', justifyContent: 'center', maxWidth: '720px' }}>
-                {(isEn
-                  ? [
-                      'How can I maintain Fajr prayer on time?',
-                      'What are the confirmed daily Sunnah prayers?',
-                      'How to organize daily Quran reading with prayer times?',
-                      'What is the ruling on doubt and forgetfulness in prayer?',
-                    ]
-                  : [
-                      'كيف أحافظ على صلاة الفجر في وقتها؟',
-                      'ما هي السنن الرواتب المؤكدة؟',
-                      'كيف أنظم ورد القرآن اليومي مع أوقات الصلوات؟',
-                      'ما حكم الشك والسهو في الصلاة؟',
-                    ]
-                ).map((promptText, idx) => (
-                  <button
-                    key={idx}
-                    type="button"
-                    className="btn-secondary"
-                    onClick={() => handleQuickTagClick(promptText)}
-                    style={{
-                      padding: '8px 16px',
-                      borderRadius: 'var(--radius-pill)',
-                      fontSize: '0.82rem',
-                      backgroundColor: 'rgba(255, 255, 255, 0.04)',
-                      borderColor: 'rgba(255, 255, 255, 0.12)',
-                      cursor: 'pointer',
-                      transition: 'all 0.15s ease',
-                    }}
-                  >
-                    <span>{promptText}</span>
-                  </button>
-                ))}
-              </div>
+              {/* Generating Suggestions Loading Indicator (3 Animated Dots) */}
+              {isGeneratingSuggestions && (!Array.isArray(dailySuggestions) || dailySuggestions.length === 0) && (
+                <div
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '10px',
+                    padding: '8px 22px',
+                    borderRadius: 'var(--radius-pill)',
+                    backgroundColor: 'rgba(255, 255, 255, 0.04)',
+                    border: '1px solid rgba(255, 255, 255, 0.1)',
+                    color: 'var(--text-muted)',
+                    fontSize: '0.82rem',
+                    animation: 'fadeIn 0.25s ease-out',
+                  }}
+                >
+                  <span style={{ opacity: 0.85 }}>{isEn ? 'Crafting daily suggestions' : 'جاري صياغة أسئلة واقتراحات اليوم'}</span>
+                  <div style={{ display: 'inline-flex', gap: '5px', alignItems: 'center' }}>
+                    <span className="typing-dot" />
+                    <span className="typing-dot" />
+                    <span className="typing-dot" />
+                  </div>
+                </div>
+              )}
+
+              {/* Quick Dynamic Suggestion Prompt Cards (Generated dynamically by AI) */}
+              {Array.isArray(dailySuggestions) && dailySuggestions.length > 0 && !isGeneratingSuggestions && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', justifyContent: 'center', maxWidth: '740px', alignItems: 'center' }}>
+                  {dailySuggestions.map((promptText, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      className="btn-secondary"
+                      onClick={() => handleQuickTagClick(promptText)}
+                      style={{
+                        padding: '8px 16px',
+                        borderRadius: 'var(--radius-pill)',
+                        fontSize: '0.82rem',
+                        backgroundColor: 'rgba(255, 255, 255, 0.04)',
+                        borderColor: 'rgba(255, 255, 255, 0.12)',
+                        cursor: 'pointer',
+                        transition: 'all 0.15s ease',
+                      }}
+                    >
+                      <span>{promptText}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
 
               {/* Last Centered Elements: New Chat & Chat History Buttons */}
               <div
@@ -1803,23 +2083,18 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
             </div>
           ) : (
             <>
-              {/* Active Chat Top Header Bar */}
+              {/* Active Chat Top Header Bar (Frameless & Clean) */}
               <div
                 style={{
                   display: 'flex',
                   alignItems: 'center',
-                  justifyContent: 'space-between',
-                  padding: '10px 20px',
-                  borderBottom: '1px solid var(--border-subtle)',
-                  backgroundColor: 'rgba(255, 255, 255, 0.02)',
+                  justifyContent: 'flex-end',
+                  padding: '12px 20px',
+                  borderBottom: 'none',
+                  backgroundColor: 'transparent',
                   flexShrink: 0,
                 }}
               >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem', fontWeight: '700', color: 'var(--text-primary)' }}>
-                  <Bot size={16} style={{ color: 'var(--status-on-time)' }} />
-                  <span>{isEn ? 'Sheikh Muneer' : 'الشيخ منير'}</span>
-                </div>
-
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <button
                     type="button"
@@ -1872,23 +2147,63 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
               const safeText = typeof msg.text === 'string' ? msg.text : String(msg.text || '');
 
               return (
-                <div key={msg.id} className={`message-bubble ${msg.sender === 'user' ? 'user' : 'assistant'}`}>
-                  {/* User Indicator (Icon + Name) */}
+                <div key={msg.id} className={`message-bubble ${msg.sender === 'user' ? 'user' : 'assistant'} ${msg.status === 'pending' ? 'is-pending' : ''}`}>
+                  {/* User Indicator (Icon + Name) + Pending Status Badge */}
                   {msg.sender === 'user' && (
                     <div
                       style={{
                         display: 'flex',
                         alignItems: 'center',
-                        gap: '6px',
+                        justifyContent: 'space-between',
                         marginBottom: '6px',
-                        opacity: 0.85,
-                        color: 'var(--text-muted, #94a3b8)',
+                        opacity: 0.9,
+                        color: 'var(--text-muted, #a3a3a3)',
                         fontSize: '0.78rem',
                         fontWeight: '600',
+                        flexWrap: 'wrap',
+                        gap: '6px',
                       }}
                     >
-                      <User size={13} />
-                      <span>{(settings && settings.userName) || (isEn ? 'You' : 'أنت')}</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <User size={13} />
+                        <span>{(settings && settings.userName) || (isEn ? 'You' : 'أنت')}</span>
+                      </div>
+
+                      {msg.status === 'pending' && (
+                        <div
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            backgroundColor: 'rgba(255, 255, 255, 0.12)',
+                            border: '1px solid rgba(255, 255, 255, 0.25)',
+                            borderRadius: 'var(--radius-pill)',
+                            padding: '2px 8px',
+                            fontSize: '0.72rem',
+                            fontWeight: '600',
+                            color: '#ffffff',
+                          }}
+                        >
+                          <Clock size={11} className="spin-slow" />
+                          <span>{isEn ? 'Pending in Queue' : 'رسالة معلقة (في الانتظار)'}</span>
+                          <button
+                            type="button"
+                            onClick={() => handleCancelPendingMessage(msg.id)}
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              color: '#ef4444',
+                              cursor: 'pointer',
+                              padding: 0,
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                            }}
+                            title={isEn ? 'Cancel pending message' : 'إلغاء الرسالة المعلقة'}
+                          >
+                            <X size={11} />
+                          </button>
+                        </div>
+                      )}
                     </div>
                   )}
 
@@ -1901,9 +2216,9 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
                           display: 'flex',
                           alignItems: 'center',
                           gap: '8px',
-                          backgroundColor: 'rgba(234, 179, 8, 0.12)',
-                          border: '1px solid rgba(234, 179, 8, 0.28)',
-                          color: '#facc15',
+                          backgroundColor: 'rgba(255, 255, 255, 0.08)',
+                          border: '1px solid rgba(255, 255, 255, 0.2)',
+                          color: '#ffffff',
                           padding: '8px 12px',
                           borderRadius: '8px',
                           fontSize: '0.8rem',
@@ -2004,7 +2319,7 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
                           display: 'flex',
                           alignItems: 'center',
                           gap: '10px',
-                          color: 'var(--text-muted, #94a3b8)',
+                          color: 'var(--text-muted, #a3a3a3)',
                           fontSize: '0.75rem',
                           flexWrap: 'wrap',
                         }}
@@ -2044,7 +2359,7 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
                           style={{
                             background: 'none',
                             border: 'none',
-                            color: correctingMsgId === msg.id ? 'var(--accent-blue, #38bdf8)' : 'inherit',
+                            color: correctingMsgId === msg.id ? '#ffffff' : 'inherit',
                             cursor: correctingMsgId === msg.id ? 'wait' : 'pointer',
                             padding: '4px',
                             display: 'inline-flex',
@@ -2139,7 +2454,7 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
                             style={{
                               background: 'none',
                               border: 'none',
-                              color: hoveredInfoMsgId === msg.id ? 'var(--accent-blue, #38bdf8)' : 'inherit',
+                              color: hoveredInfoMsgId === msg.id ? '#ffffff' : 'inherit',
                               cursor: 'pointer',
                               padding: '4px',
                               display: 'inline-flex',
@@ -2160,7 +2475,7 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
                                 right: isEn ? 'auto' : '-10px',
                                 left: isEn ? '-10px' : 'auto',
                                 marginBottom: '8px',
-                                backgroundColor: 'rgba(15, 23, 42, 0.97)',
+                                backgroundColor: 'rgba(10, 10, 10, 0.88)',
                                 backdropFilter: 'blur(12px)',
                                 border: '1px solid rgba(255, 255, 255, 0.15)',
                                 borderRadius: '8px',
@@ -2178,7 +2493,7 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
                                 textAlign: isEn ? 'left' : 'right',
                                 direction: isEn ? 'ltr' : 'rtl',
                                 fontSize: '0.75rem',
-                                color: 'var(--text-secondary, #cbd5e1)',
+                                color: 'var(--text-secondary, #d4d4d4)',
                                 fontWeight: '400',
                               }}
                             >
@@ -2212,7 +2527,7 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
                           alignItems: 'center',
                           justifyContent: 'space-between',
                           width: '100%',
-                          color: 'var(--text-muted, #94a3b8)',
+                          color: 'var(--text-muted, #a3a3a3)',
                           fontSize: '0.75rem',
                           gap: '12px',
                           flexWrap: 'wrap',
@@ -2339,7 +2654,7 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
                                 style={{
                                   background: 'none',
                                   border: 'none',
-                                  color: hoveredInfoMsgId === msg.id ? 'var(--accent-blue, #38bdf8)' : 'inherit',
+                                  color: hoveredInfoMsgId === msg.id ? '#ffffff' : 'inherit',
                                   cursor: 'pointer',
                                   padding: '4px',
                                   display: 'inline-flex',
@@ -2360,7 +2675,7 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
                                     right: isEn ? 'auto' : '-10px',
                                     left: isEn ? '-10px' : 'auto',
                                     marginBottom: '8px',
-                                    backgroundColor: 'rgba(15, 23, 42, 0.97)',
+                                    backgroundColor: 'rgba(10, 10, 10, 0.88)',
                                     backdropFilter: 'blur(12px)',
                                     border: '1px solid rgba(255, 255, 255, 0.15)',
                                     borderRadius: '8px',
@@ -2378,7 +2693,7 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
                                     textAlign: isEn ? 'left' : 'right',
                                     direction: isEn ? 'ltr' : 'rtl',
                                     fontSize: '0.75rem',
-                                    color: 'var(--text-secondary, #cbd5e1)',
+                                    color: 'var(--text-secondary, #d4d4d4)',
                                     fontWeight: '400',
                                   }}
                                 >
@@ -2505,7 +2820,7 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
             <div ref={messagesEndRef} />
           </div>
 
-          {/* Floating Streamlined Bottom Input Area with Black Gradient (Transparent at Top 0% -> Dark 85% at Bottom 100%) */}
+          {/* Floating Streamlined Bottom Input Area (Clean & Transparent) */}
           <div
             style={{
               position: 'absolute',
@@ -2513,8 +2828,8 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
               left: 0,
               right: 0,
               zIndex: 10,
-              padding: '48px 20px 10px 20px',
-              background: 'linear-gradient(to bottom, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 0.40) 25%, rgba(0, 0, 0, 0.75) 60%, rgba(0, 0, 0, 0.92) 100%)',
+              padding: '16px 20px 16px 20px',
+              background: 'transparent',
               borderTop: 'none',
               display: 'flex',
               flexDirection: 'column',
@@ -2525,219 +2840,323 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
             }}
           >
             {/* Input Capsule */}
-            <div
-              className="chat-input-capsule"
-              style={{
-                pointerEvents: 'auto',
-                width: '100%',
-                maxWidth: '860px',
-                minHeight: '52px',
-                backgroundColor: 'rgba(15, 23, 42, 0.92)',
-                border: '1px solid rgba(255, 255, 255, 0.16)',
-                borderRadius: 'var(--radius-pill)',
-                padding: '6px 8px 6px 14px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '10px',
-                boxShadow: '0 12px 32px rgba(0, 0, 0, 0.55)',
-                backdropFilter: 'blur(20px)',
-                WebkitBackdropFilter: 'blur(20px)',
-              }}
-            >
-              <input
-                type="file"
-                ref={fileInputRef}
-                style={{ display: 'none' }}
-                onChange={handleFileUpload}
-                multiple
-              />
+            {!isOnline ? (
+              <div
+                className="chat-input-capsule"
+                style={{
+                  pointerEvents: 'auto',
+                  width: '100%',
+                  maxWidth: '860px',
+                  minHeight: '52px',
+                  backgroundColor: 'rgba(18, 14, 2, 0.92)',
+                  border: '1px solid rgba(234, 179, 8, 0.4)',
+                  borderRadius: 'var(--radius-pill)',
+                  padding: '8px 20px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: '12px',
+                  boxShadow: '0 12px 32px rgba(0, 0, 0, 0.65)',
+                  backdropFilter: 'blur(20px)',
+                  WebkitBackdropFilter: 'blur(20px)',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: 'clamp(0.78rem, 1.4vw, 0.86rem)', color: '#fde047', fontWeight: '600', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flex: 1, minWidth: 0 }}>
+                  <AlertTriangle size={18} style={{ color: '#fde047', flexShrink: 0 }} />
+                  <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {isEn
+                      ? 'Warning: Internet disconnected — AI Chat is locked (History available)'
+                      : 'تحذير: انقطع الاتصال بالإنترنت — المحادثة مقفلة (تصفح السجل متاح)'}
+                  </span>
+                </div>
+                <div
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    fontSize: '0.78rem',
+                    color: '#fde047',
+                    padding: '4px 12px',
+                    borderRadius: 'var(--radius-pill)',
+                    backgroundColor: 'rgba(234, 179, 8, 0.15)',
+                    border: '1px solid rgba(234, 179, 8, 0.3)',
+                    whiteSpace: 'nowrap',
+                    fontWeight: '700',
+                  }}
+                >
+                  <Lock size={13} />
+                  <span>{isEn ? 'Offline' : 'بدون إنترنت'}</span>
+                </div>
+              </div>
+            ) : !hasGeminiKey ? (
+              <div
+                className="chat-input-capsule"
+                style={{
+                  pointerEvents: 'auto',
+                  width: '100%',
+                  maxWidth: '860px',
+                  minHeight: '52px',
+                  backgroundColor: 'rgba(10, 10, 10, 0.88)',
+                  border: '1px solid rgba(255, 255, 255, 0.16)',
+                  borderRadius: 'var(--radius-pill)',
+                  padding: '8px 16px 8px 20px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: '12px',
+                  boxShadow: '0 12px 32px rgba(0, 0, 0, 0.55)',
+                  backdropFilter: 'blur(20px)',
+                  WebkitBackdropFilter: 'blur(20px)',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem', color: 'var(--status-late)', fontWeight: '600' }}>
+                  <AlertCircle size={16} style={{ flexShrink: 0 }} />
+                  <span>{isEn ? 'Gemini API Key is required to enable chat with Sheikh Muneer' : 'يلزم إضافة مفتاح Gemini API لتفعيل الدردشة مع الشيخ منير'}</span>
+                </div>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  style={{ fontSize: '0.80rem', padding: '6px 14px', borderRadius: 'var(--radius-pill)', whiteSpace: 'nowrap' }}
+                  onClick={onNavigateToSettings}
+                >
+                  <span>{isEn ? 'Go to Settings' : 'الانتقال للإعدادات'}</span>
+                </button>
+              </div>
+            ) : (
+              <div
+                className="chat-input-capsule"
+                style={{
+                  pointerEvents: 'auto',
+                  width: '100%',
+                  maxWidth: '860px',
+                  minHeight: '52px',
+                  backgroundColor: 'rgba(10, 10, 10, 0.88)',
+                  border: '1px solid rgba(255, 255, 255, 0.16)',
+                  borderRadius: 'var(--radius-pill)',
+                  padding: '6px 8px 6px 14px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '10px',
+                  boxShadow: '0 12px 32px rgba(0, 0, 0, 0.55)',
+                  backdropFilter: 'blur(20px)',
+                  WebkitBackdropFilter: 'blur(20px)',
+                }}
+              >
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  style={{ display: 'none' }}
+                  onChange={handleFileUpload}
+                  multiple
+                />
 
-              {/* 1. Send / Pause / Resume / Stop Buttons / Model Icon */}
-              {isLoading || isStreaming ? (
-                <div className="input-capsule-action" style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
-                  {/* 1. Stop Button (First) */}
+                {/* 1. Send / Pause / Resume / Stop Buttons / Model Icon */}
+                {isLoading || isStreaming ? (
+                  <div className="input-capsule-action" style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+                    {/* Queue Pending Message Button if user typed text */}
+                    {hasInputContent && (
+                      <button
+                        type="button"
+                        className="btn-primary"
+                        onClick={() => handleSend()}
+                        style={{
+                          height: '38px',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '6px',
+                          padding: '0 14px',
+                          borderRadius: 'var(--radius-pill)',
+                          fontWeight: '700',
+                          fontSize: '0.82rem',
+                          backgroundColor: 'rgba(255, 255, 255, 0.2)',
+                          border: '1px solid rgba(255, 255, 255, 0.4)',
+                          color: '#ffffff',
+                          cursor: 'pointer',
+                        }}
+                        title={isEn ? 'Queue pending message' : 'إرسال رسالة معلقة (في الطابور)'}
+                        id="chat-queue-btn"
+                      >
+                        <Clock size={13} />
+                        <span>{isEn ? 'Queue' : 'تعليق'}</span>
+                      </button>
+                    )}
+
+                    {/* 1. Stop Button (Icon-only) */}
+                    <button
+                      type="button"
+                      className="btn-danger"
+                      onClick={handleStopGeneration}
+                      style={{
+                        width: '38px',
+                        height: '38px',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        padding: 0,
+                        backgroundColor: 'rgba(239, 68, 68, 0.16)',
+                        color: '#ef4444',
+                        border: '1px solid rgba(239, 68, 68, 0.35)',
+                        borderRadius: '50%',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s ease',
+                      }}
+                      id="chat-stop-btn"
+                      title={isEn ? 'Stop response' : 'إنهاء وإيقاف الرد'}
+                      aria-label={isEn ? 'Stop response' : 'إنهاء وإيقاف الرد'}
+                    >
+                      <Square size={13} style={{ fill: 'currentColor' }} />
+                    </button>
+
+                    {/* 2. Pause / Resume Button (Icon-only, active when streaming) */}
+                    {isStreaming && (
+                      <button
+                        type="button"
+                        onClick={handleTogglePauseResume}
+                        style={{
+                          width: '38px',
+                          height: '38px',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          padding: 0,
+                          backgroundColor: isPaused ? 'rgba(255, 255, 255, 0.22)' : 'rgba(255, 255, 255, 0.16)',
+                          color: '#ffffff',
+                          border: isPaused ? '1px solid rgba(255, 255, 255, 0.45)' : '1px solid rgba(255, 255, 255, 0.35)',
+                          borderRadius: '50%',
+                          cursor: 'pointer',
+                          transition: 'all 0.2s ease',
+                          boxShadow: isPaused ? '0 4px 12px rgba(0, 0, 0, 0.25)' : 'none',
+                        }}
+                        id="chat-pause-resume-btn"
+                        title={isPaused ? (isEn ? 'Resume response' : 'استئناف كتابة الرد') : (isEn ? 'Pause response' : 'إيقاف الرد مؤقتاً')}
+                        aria-label={isPaused ? (isEn ? 'Resume response' : 'استئناف كتابة الرد') : (isEn ? 'Pause response' : 'إيقاف الرد مؤقتاً')}
+                      >
+                        {isPaused ? <Play size={14} style={{ fill: 'currentColor' }} /> : <Pause size={14} style={{ fill: 'currentColor' }} />}
+                      </button>
+                    )}
+                  </div>
+                ) : hasInputContent ? (
                   <button
-                    type="button"
-                    className="btn-danger"
-                    onClick={handleStopGeneration}
+                    className="btn-primary input-capsule-action"
+                    onClick={() => handleSend()}
                     style={{
                       height: '38px',
                       display: 'inline-flex',
                       alignItems: 'center',
                       justifyContent: 'center',
-                      gap: '5px',
-                      padding: '0 14px',
-                      backgroundColor: 'rgba(239, 68, 68, 0.16)',
-                      color: '#ef4444',
-                      border: '1px solid rgba(239, 68, 68, 0.35)',
+                      gap: '6px',
+                      padding: '0 18px',
                       borderRadius: 'var(--radius-pill)',
                       fontWeight: '700',
-                      fontSize: '0.84rem',
-                      cursor: 'pointer',
-                      whiteSpace: 'nowrap',
-                      transition: 'all 0.2s ease',
+                      fontSize: '0.86rem',
+                      flexShrink: 0,
                     }}
-                    id="chat-stop-btn"
-                    title={isEn ? 'Stop response' : 'إنهاء وإيقاف الرد كلياً'}
+                    id="chat-send-btn"
                   >
-                    <Square size={12} style={{ fill: 'currentColor' }} />
-                    <span>{isEn ? 'Stop' : 'إيقاف'}</span>
+                    <Send size={15} />
+                    <span>{isEn ? 'Send' : 'إرسال'}</span>
                   </button>
+                ) : (
+                  <div
+                    className="input-capsule-action"
+                    style={{
+                      width: '38px',
+                      height: '38px',
+                      borderRadius: '50%',
+                      backgroundColor: 'rgba(255, 255, 255, 0.07)',
+                      border: '1px solid rgba(255, 255, 255, 0.12)',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      color: '#ffffff',
+                      flexShrink: 0,
+                    }}
+                    title={isEn ? 'Sheikh Muneer AI' : 'الشيخ منير الذكي'}
+                  >
+                    <Sparkles size={17} />
+                  </div>
+                )}
 
-                  {/* 2. Pause / Resume Button (Second, active when streaming) */}
-                  {isStreaming && (
-                    <button
-                      type="button"
-                      onClick={handleTogglePauseResume}
-                      style={{
-                        height: '38px',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: '6px',
-                        padding: '0 14px',
-                        backgroundColor: isPaused ? 'rgba(234, 179, 8, 0.22)' : 'rgba(56, 189, 248, 0.16)',
-                        color: isPaused ? '#facc15' : 'var(--accent-blue, #38bdf8)',
-                        border: isPaused ? '1px solid rgba(234, 179, 8, 0.45)' : '1px solid rgba(56, 189, 248, 0.35)',
-                        borderRadius: 'var(--radius-pill)',
-                        fontWeight: '700',
-                        fontSize: '0.84rem',
-                        cursor: 'pointer',
-                        whiteSpace: 'nowrap',
-                        transition: 'all 0.2s ease',
-                        boxShadow: isPaused ? '0 4px 12px rgba(0, 0, 0, 0.25)' : 'none',
-                      }}
-                      id="chat-pause-resume-btn"
-                      title={isPaused ? (isEn ? 'Resume response' : 'استئناف كتابة الرد') : (isEn ? 'Pause response' : 'إيقاف الرد مؤقتاً')}
-                    >
-                      {isPaused ? <Play size={13} style={{ fill: 'currentColor' }} /> : <Pause size={13} style={{ fill: 'currentColor' }} />}
-                      <span>{isPaused ? (isEn ? 'Resume' : 'استئناف') : (isEn ? 'Pause' : 'إيقاف مؤقت')}</span>
-                    </button>
-                  )}
-                </div>
-              ) : hasInputContent ? (
-                <button
-                  className="btn-primary input-capsule-action"
-                  onClick={() => handleSend()}
+                {/* 2. Inline Rich Input Editor (Text & Images mix inline) */}
+                <div
+                  ref={activeEditorRef}
+                  contentEditable={true}
+                  dir={isEn ? 'ltr' : 'rtl'}
+                  className="rich-chat-input"
+                  data-placeholder={isEn ? 'Ask Sheikh Muneer...' : 'إسأل الشيخ منير…'}
+                  onInput={(e) => {
+                    const hasAny =
+                      e.currentTarget.innerText.trim().length > 0 ||
+                      e.currentTarget.querySelectorAll('.inline-file-chip').length > 0;
+                    setHasInputContent(hasAny);
+                  }}
+                  onPaste={(e) =>
+                    handleEditorPaste(
+                      e,
+                      activeEditorRef.current,
+                      attachedFilesMapRef,
+                      setHasInputContent
+                    )
+                  }
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSend();
+                    }
+                  }}
+                  id="chat-text-input"
+                />
+
+                {/* 3. Model Indicator Badge */}
+                <div
+                  className="input-capsule-model"
                   style={{
-                    height: '38px',
+                    height: '30px',
                     display: 'inline-flex',
                     alignItems: 'center',
                     justifyContent: 'center',
                     gap: '6px',
-                    padding: '0 18px',
+                    padding: '0 10px',
                     borderRadius: 'var(--radius-pill)',
-                    fontWeight: '700',
-                    fontSize: '0.86rem',
+                    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+                    border: '1px solid rgba(255, 255, 255, 0.10)',
+                    fontSize: '0.75rem',
+                    color: 'var(--text-secondary)',
+                    whiteSpace: 'nowrap',
                     flexShrink: 0,
-                    animation: 'previewFadeIn 0.2s ease-out',
                   }}
-                  id="chat-send-btn"
                 >
-                  <Send size={15} />
-                  <span>{isEn ? 'Send' : 'إرسال'}</span>
-                </button>
-              ) : (
-                <div
-                  className="input-capsule-action"
+                  <span>Muneer AI</span>
+                </div>
+
+                {/* 4. Attach File Button */}
+                <button
+                  type="button"
+                  className="input-capsule-attach"
                   style={{
-                    width: '38px',
-                    height: '38px',
-                    borderRadius: '50%',
-                    backgroundColor: 'rgba(255, 255, 255, 0.07)',
-                    border: '1px solid rgba(255, 255, 255, 0.12)',
+                    width: '36px',
+                    height: '36px',
+                    background: 'rgba(255, 255, 255, 0.06)',
+                    border: '1px solid rgba(255, 255, 255, 0.10)',
+                    color: 'var(--text-secondary)',
+                    cursor: 'pointer',
                     display: 'inline-flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    color: 'var(--accent-blue)',
+                    padding: 0,
+                    borderRadius: '50%',
+                    transition: 'all 0.15s ease',
                     flexShrink: 0,
-                    animation: 'previewFadeIn 0.2s ease-out',
                   }}
-                  title={isEn ? 'Sheikh Muneer AI' : 'الشيخ منير الذكي'}
+                  onClick={() => fileInputRef.current?.click()}
+                  title={isEn ? 'Attach files or images' : 'إضافة ملفات'}
+                  id="attach-file-btn"
                 >
-                  <Sparkles size={17} />
-                </div>
-              )}
-
-              {/* 2. Inline Rich Input Editor (Text & Images mix inline) */}
-              <div
-                ref={activeEditorRef}
-                contentEditable={!isLoading}
-                dir={isEn ? 'ltr' : 'rtl'}
-                className="rich-chat-input"
-                data-placeholder={isEn ? 'Ask Sheikh Muneer...' : 'إسأل الشيخ منير…'}
-                onInput={(e) => {
-                  const hasAny =
-                    e.currentTarget.innerText.trim().length > 0 ||
-                    e.currentTarget.querySelectorAll('.inline-file-chip').length > 0;
-                  setHasInputContent(hasAny);
-                }}
-                onPaste={(e) =>
-                  handleEditorPaste(
-                    e,
-                    activeEditorRef.current,
-                    attachedFilesMapRef,
-                    setHasInputContent
-                  )
-                }
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    handleSend();
-                  }
-                }}
-                id="chat-text-input"
-              />
-
-              {/* 3. Model Indicator Badge */}
-              <div
-                className="input-capsule-model"
-                style={{
-                  height: '30px',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: '6px',
-                  padding: '0 10px',
-                  borderRadius: 'var(--radius-pill)',
-                  backgroundColor: 'rgba(255, 255, 255, 0.06)',
-                  border: '1px solid rgba(255, 255, 255, 0.10)',
-                  fontSize: '0.75rem',
-                  color: 'var(--text-secondary)',
-                  whiteSpace: 'nowrap',
-                  flexShrink: 0,
-                }}
-              >
-                <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#38bdf8' }}></span>
-                <span>Muneer AI</span>
+                  <Paperclip size={16} />
+                </button>
               </div>
-
-              {/* 4. Attach File Button */}
-              <button
-                type="button"
-                className="input-capsule-attach"
-                style={{
-                  width: '36px',
-                  height: '36px',
-                  background: 'rgba(255, 255, 255, 0.06)',
-                  border: '1px solid rgba(255, 255, 255, 0.10)',
-                  color: 'var(--text-secondary)',
-                  cursor: 'pointer',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  padding: 0,
-                  borderRadius: '50%',
-                  transition: 'all 0.15s ease',
-                  flexShrink: 0,
-                }}
-                onClick={() => fileInputRef.current?.click()}
-                title={isEn ? 'Attach files or images' : 'إضافة ملفات'}
-                id="attach-file-btn"
-              >
-                <Paperclip size={16} />
-              </button>
-            </div>
+            )}
 
             {/* Disclaimer Note below active input bar */}
             <div
@@ -2759,7 +3178,7 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
       </div>
 
       {/* Secondary Floating Modal Window for Chat History & Sessions */}
-      {isHistoryModalOpen && (
+      {typeof document !== 'undefined' && isHistoryModalOpen && ReactDOM.createPortal(
         <div
           style={{
             position: 'fixed',
@@ -2767,7 +3186,7 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
             backgroundColor: 'rgba(0, 0, 0, 0.80)',
             backdropFilter: 'blur(16px)',
             WebkitBackdropFilter: 'blur(16px)',
-            zIndex: 3500,
+            zIndex: 10000,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -2777,14 +3196,17 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
           onClick={() => setIsHistoryModalOpen(false)}
         >
           <div
+            className="bento-card"
             style={{
-              backgroundColor: 'rgba(15, 23, 42, 0.95)',
-              border: '1px solid rgba(255, 255, 255, 0.18)',
+              backgroundColor: 'rgba(10, 10, 10, 0.88)',
+              backdropFilter: 'blur(20px)',
+              WebkitBackdropFilter: 'blur(20px)',
+              border: '1px solid rgba(255, 255, 255, 0.16)',
               borderRadius: 'var(--radius-lg)',
-              width: 'min(92%, 540px)',
-              maxHeight: '82vh',
+              width: 'min(94%, 540px)',
+              maxHeight: '84vh',
               padding: '24px',
-              boxShadow: '0 25px 60px rgba(0, 0, 0, 0.7)',
+              boxShadow: '0 25px 60px rgba(0, 0, 0, 0.80)',
               color: 'var(--text-primary)',
               position: 'relative',
               display: 'flex',
@@ -2794,44 +3216,39 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
             onClick={(e) => e.stopPropagation()}
           >
             {/* Modal Header */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '14px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontWeight: '800', fontSize: '1.15rem' }}>
-                <History size={22} style={{ color: 'var(--status-on-time)' }} />
-                <span>{isEn ? 'Chat History' : 'سجل المحادثات'}</span>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid rgba(255, 255, 255, 0.1)', paddingBottom: '14px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{ width: '36px', height: '36px', borderRadius: '50%', backgroundColor: 'rgba(255, 255, 255, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <History size={18} style={{ color: '#ffffff' }} />
+                </div>
+                <span style={{ fontWeight: '800', fontSize: '1.15rem', color: '#ffffff' }}>
+                  {isEn ? 'Chat History' : 'سجل المحادثات'}
+                </span>
               </div>
 
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <button
                   type="button"
                   className="btn-primary"
-                  style={{ padding: '6px 14px', fontSize: '0.82rem', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                  style={{ padding: '6px 14px', fontSize: '0.80rem', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
                   onClick={() => {
                     handleCreateNewSession();
                     setIsHistoryModalOpen(false);
                   }}
                   id="modal-new-chat-btn"
                 >
-                  <Plus size={15} />
+                  <Plus size={14} />
                   <span>{isEn ? 'New Chat' : 'محادثة جديدة'}</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => setIsHistoryModalOpen(false)}
-                  style={{
-                    background: 'rgba(255, 255, 255, 0.08)',
-                    border: '1px solid var(--border-subtle)',
-                    borderRadius: 'var(--radius-sm)',
-                    padding: '6px',
-                    color: 'var(--text-secondary)',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                  }}
+                  className="nav-btn"
+                  style={{ width: '34px', height: '34px' }}
                   title={isEn ? 'Close' : 'إغلاق'}
                 >
-                  <X size={18} />
+                  <X size={16} />
                 </button>
               </div>
             </div>
@@ -2863,10 +3280,10 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
                     style={{
                       display: 'flex',
                       gap: '6px',
-                      backgroundColor: 'rgba(255, 255, 255, 0.04)',
+                      backgroundColor: 'rgba(255, 255, 255, 0.05)',
                       padding: '4px',
                       borderRadius: 'var(--radius-pill)',
-                      border: '1px solid var(--border-subtle)',
+                      border: '1px solid rgba(255, 255, 255, 0.08)',
                     }}
                   >
                     <button
@@ -2874,15 +3291,15 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
                       onClick={() => setHistoryFilter('complete')}
                       style={{
                         flex: 1,
-                        padding: '6px 10px',
+                        padding: '7px 12px',
                         borderRadius: 'var(--radius-pill)',
-                        fontSize: '0.78rem',
-                        fontWeight: historyFilter === 'complete' ? '700' : '500',
-                        backgroundColor: historyFilter === 'complete' ? 'rgba(255, 255, 255, 0.15)' : 'transparent',
+                        fontSize: '0.80rem',
+                        fontWeight: '700',
+                        backgroundColor: historyFilter === 'complete' ? 'rgba(255, 255, 255, 0.16)' : 'transparent',
                         color: historyFilter === 'complete' ? '#ffffff' : 'var(--text-secondary)',
-                        border: historyFilter === 'complete' ? '1px solid rgba(255, 255, 255, 0.35)' : 'none',
+                        border: historyFilter === 'complete' ? '1px solid rgba(255, 255, 255, 0.25)' : '1px solid transparent',
                         cursor: 'pointer',
-                        transition: 'all 0.15s ease',
+                        transition: 'all 0.18s ease',
                       }}
                     >
                       {isEn ? `Complete (${completeSessionsCount})` : `مكتملة (${completeSessionsCount})`}
@@ -2892,15 +3309,15 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
                       onClick={() => setHistoryFilter('pending')}
                       style={{
                         flex: 1,
-                        padding: '6px 10px',
+                        padding: '7px 12px',
                         borderRadius: 'var(--radius-pill)',
-                        fontSize: '0.78rem',
-                        fontWeight: historyFilter === 'pending' ? '700' : '500',
-                        backgroundColor: historyFilter === 'pending' ? 'rgba(245, 158, 11, 0.2)' : 'transparent',
-                        color: historyFilter === 'pending' ? '#f59e0b' : 'var(--text-secondary)',
-                        border: historyFilter === 'pending' ? '1px solid rgba(245, 158, 11, 0.4)' : 'none',
+                        fontSize: '0.80rem',
+                        fontWeight: '700',
+                        backgroundColor: historyFilter === 'pending' ? 'rgba(255, 255, 255, 0.16)' : 'transparent',
+                        color: historyFilter === 'pending' ? '#ffffff' : 'var(--text-secondary)',
+                        border: historyFilter === 'pending' ? '1px solid rgba(255, 255, 255, 0.25)' : '1px solid transparent',
                         cursor: 'pointer',
-                        transition: 'all 0.15s ease',
+                        transition: 'all 0.18s ease',
                       }}
                     >
                       {isEn ? `Awaiting AI (${pendingSessionsCount})` : `بدون ردود (${pendingSessionsCount})`}
@@ -2920,7 +3337,7 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
                     }}
                   >
                     {displayedSessions.length === 0 ? (
-                      <div style={{ textAlign: 'center', padding: '30px 10px', color: 'var(--text-muted)', fontSize: '0.86rem' }}>
+                      <div style={{ textAlign: 'center', padding: '36px 10px', color: 'var(--text-muted)', fontSize: '0.86rem' }}>
                         {isEn ? 'No conversations found in this category.' : 'لا توجد محادثات في هذا التصنيف.'}
                       </div>
                     ) : (
@@ -2939,38 +3356,71 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
                               handleSelectSession(sess.id);
                               setIsHistoryModalOpen(false);
                             }}
+                            className="sub-glass-card"
                             style={{
-                              padding: '12px 16px',
+                              padding: '11px 14px',
                               borderRadius: 'var(--radius-md)',
-                              backgroundColor: isActive ? 'var(--bg-elevated)' : 'rgba(255, 255, 255, 0.03)',
-                              border: isActive ? '1px solid var(--border-focus)' : '1px solid var(--border-subtle)',
+                              backgroundColor: isActive ? 'rgba(255, 255, 255, 0.14)' : 'rgba(18, 18, 18, 0.65)',
+                              border: isActive ? '1.5px solid #ffffff' : '1px solid rgba(255, 255, 255, 0.10)',
                               cursor: 'pointer',
-                              fontSize: '0.9rem',
-                              color: isActive ? '#ffffff' : 'var(--text-secondary)',
                               display: 'flex',
                               alignItems: 'center',
                               justifyContent: 'space-between',
-                              transition: 'all 0.15s ease',
                               gap: '12px',
+                              transition: 'all 0.18s ease',
                             }}
                           >
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, overflow: 'hidden' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, minWidth: 0 }}>
                               <MessageSquare
                                 size={16}
                                 style={{
                                   flexShrink: 0,
-                                  opacity: isActive ? 1 : 0.7,
-                                  color: isComplete ? 'var(--status-on-time)' : isPending ? '#f59e0b' : 'inherit',
+                                  color: isComplete ? 'var(--status-on-time)' : isPending ? '#ffffff' : 'var(--text-secondary)',
+                                  opacity: isActive ? 1 : 0.8,
                                 }}
                               />
-                              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: isActive ? '700' : '500' }}>
+                              <span
+                                style={{
+                                  fontSize: '0.90rem',
+                                  fontWeight: isActive ? '800' : '600',
+                                  color: '#ffffff',
+                                  overflow: 'hidden',
+                                  textOverflow: 'ellipsis',
+                                  whiteSpace: 'nowrap',
+                                }}
+                              >
                                 {typeof sess.title === 'string' ? sess.title : (isEn ? 'Conversation' : 'محادثة')}
                               </span>
                             </div>
 
                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
-                              <span style={{ fontSize: '0.75rem', opacity: 0.6 }}>{msgCount} {isEn ? 'messages' : 'رسائل'}</span>
-                              {isActive && <Check size={16} style={{ color: 'var(--status-on-time)' }} />}
+                              <span
+                                style={{
+                                  fontSize: '0.72rem',
+                                  fontWeight: '600',
+                                  color: 'var(--text-secondary)',
+                                  backgroundColor: 'rgba(255, 255, 255, 0.08)',
+                                  padding: '2px 8px',
+                                  borderRadius: 'var(--radius-pill)',
+                                }}
+                              >
+                                {msgCount} {isEn ? 'msgs' : 'رسائل'}
+                              </span>
+                              {isActive && <Check size={14} style={{ color: 'var(--status-on-time)' }} />}
+                              <button
+                                type="button"
+                                onClick={(e) => handleDeleteSessionById(e, sess.id)}
+                                className="nav-btn"
+                                style={{
+                                  width: '28px',
+                                  height: '28px',
+                                  color: 'var(--status-missed)',
+                                  backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                                }}
+                                title={isEn ? 'Delete conversation' : 'حذف المحادثة'}
+                              >
+                                <Trash2 size={13} />
+                              </button>
                             </div>
                           </div>
                         );
@@ -2982,11 +3432,23 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
             })()}
 
             {/* Modal Bottom Actions */}
-            <div style={{ display: 'flex', gap: '10px', borderTop: '1px solid var(--border-subtle)', paddingTop: '14px' }}>
+            <div style={{ display: 'flex', gap: '10px', borderTop: '1px solid rgba(255, 255, 255, 0.1)', paddingTop: '14px', flexWrap: 'wrap' }}>
               <button
                 type="button"
-                className="btn-secondary btn-danger"
-                style={{ flex: 1, fontSize: '0.84rem', padding: '10px 14px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+                className="btn-secondary"
+                style={{
+                  flex: 1,
+                  fontSize: '0.84rem',
+                  padding: '10px 14px',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '8px',
+                  borderRadius: 'var(--radius-md)',
+                  color: 'var(--status-missed)',
+                  backgroundColor: 'rgba(239, 68, 68, 0.08)',
+                  border: '1px solid rgba(239, 68, 68, 0.2)',
+                }}
                 onClick={() => {
                   handleDeleteCurrentSession();
                   setIsHistoryModalOpen(false);
@@ -3000,7 +3462,16 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
               <button
                 type="button"
                 className="btn-secondary"
-                style={{ flex: 1, fontSize: '0.84rem', padding: '10px 14px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+                style={{
+                  flex: 1,
+                  fontSize: '0.84rem',
+                  padding: '10px 14px',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '8px',
+                  borderRadius: 'var(--radius-md)',
+                }}
                 onClick={() => {
                   handleResetAllChats();
                   setIsHistoryModalOpen(false);
@@ -3012,11 +3483,12 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* High-Resolution Image Lightbox Modal with Smooth Animations */}
-      {previewImageModal && (
+      {typeof document !== 'undefined' && previewImageModal && ReactDOM.createPortal(
         <div
           style={{
             position: 'fixed',
@@ -3058,14 +3530,14 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
                 color: '#ffffff',
                 fontSize: '0.92rem',
                 fontWeight: '600',
-                backgroundColor: 'rgba(15, 23, 42, 0.85)',
+                backgroundColor: 'rgba(10, 10, 10, 0.88)',
                 padding: '6px 16px',
                 borderRadius: 'var(--radius-pill)',
                 border: '1px solid rgba(255, 255, 255, 0.16)',
                 boxShadow: '0 8px 24px rgba(0, 0, 0, 0.6)',
               }}
             >
-              <ImageIcon size={16} style={{ color: 'var(--accent-blue)' }} />
+              <ImageIcon size={16} style={{ color: '#ffffff' }} />
               <span
                 style={{
                   maxWidth: '300px',
@@ -3131,7 +3603,8 @@ export default function ChatView({ settings, onNavigateToSettings, onSettingsSav
               }}
             />
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

@@ -1,13 +1,13 @@
 import React, { useState, useMemo } from 'react';
 import ReactDOM from 'react-dom';
 import { X, Search, Table } from 'lucide-react';
-import { formatTimeDisplay } from '../services/timeUtils';
+import { formatTimeDisplay, getCityTodayDateStr } from '../services/timeUtils';
 
-export default function ScheduleTableModal({ isOpen, onClose, scheduleData, isEn, is12HourFormat = false }) {
+export default function ScheduleTableModal({ isOpen, onClose, scheduleData, isEn, is12HourFormat = false, timezone }) {
   const [searchQuery, setSearchQuery] = useState('');
 
-  const today = new Date();
-  const todayISO = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  const effectiveTz = timezone || scheduleData?.timezone;
+  const todayISO = useMemo(() => getCityTodayDateStr(effectiveTz), [effectiveTz]);
 
   const scheduleEntries = useMemo(() => {
     if (!scheduleData || !scheduleData.schedule) return [];
@@ -50,7 +50,7 @@ export default function ScheduleTableModal({ isOpen, onClose, scheduleData, isEn
     >
       <div
         style={{
-          backgroundColor: 'var(--bg-secondary, #1e293b)',
+          backgroundColor: 'var(--bg-secondary, rgba(10, 10, 10, 0.88))',
           border: '1px solid var(--border-subtle, rgba(255, 255, 255, 0.12))',
           borderRadius: 'var(--radius-lg, 16px)',
           width: '100%',
@@ -91,10 +91,10 @@ export default function ScheduleTableModal({ isOpen, onClose, scheduleData, isEn
               <Table size={20} />
             </div>
             <div>
-              <h2 style={{ fontSize: '1.15rem', fontWeight: '800', margin: 0, color: 'var(--text-primary, #f8fafc)' }}>
+              <h2 style={{ fontSize: '1.15rem', fontWeight: '800', margin: 0, color: 'var(--text-primary, #f5f5f5)' }}>
                 {isEn ? 'Prayer Times Schedule Table' : 'جدول مواقيت الصلاة المستخرج'}
               </h2>
-              <p style={{ fontSize: '0.78rem', color: 'var(--text-muted, #94a3b8)', margin: '2px 0 0 0' }}>
+              <p style={{ fontSize: '0.78rem', color: 'var(--text-muted, #a3a3a3)', margin: '2px 0 0 0' }}>
                 {isEn
                   ? `${scheduleData.totalDays || scheduleEntries.length} days cached locally from ${scheduleData.domain || 'Source Website'}`
                   : `تم تخزين ${scheduleData.totalDays || scheduleEntries.length} يوماً محلياً من موقع: ${scheduleData.domain || 'الموقع المصدر'}`}
@@ -108,7 +108,7 @@ export default function ScheduleTableModal({ isOpen, onClose, scheduleData, isEn
             style={{
               background: 'none',
               border: 'none',
-              color: 'var(--text-muted, #94a3b8)',
+              color: 'var(--text-muted, #a3a3a3)',
               cursor: 'pointer',
               padding: '8px',
               borderRadius: '50%',
@@ -139,7 +139,7 @@ export default function ScheduleTableModal({ isOpen, onClose, scheduleData, isEn
               display: 'flex',
               alignItems: 'center',
               gap: '8px',
-              backgroundColor: 'var(--bg-primary, #0f172a)',
+              backgroundColor: 'var(--bg-primary, #121212)',
               border: '1px solid var(--border-subtle, rgba(255, 255, 255, 0.12))',
               borderRadius: 'var(--radius-pill, 9999px)',
               padding: '6px 14px',
@@ -147,7 +147,7 @@ export default function ScheduleTableModal({ isOpen, onClose, scheduleData, isEn
               maxWidth: '300px',
             }}
           >
-            <Search size={14} style={{ color: 'var(--text-muted, #94a3b8)' }} />
+            <Search size={14} style={{ color: 'var(--text-muted, #a3a3a3)' }} />
             <input
               type="search"
               placeholder={isEn ? 'Search date (e.g. 2026-08)...' : 'ابحث عن تاريخ (مثال: 2026-08)...'}
@@ -164,7 +164,7 @@ export default function ScheduleTableModal({ isOpen, onClose, scheduleData, isEn
               style={{
                 background: 'none',
                 border: 'none',
-                color: 'var(--text-primary, #f8fafc)',
+                color: 'var(--text-primary, #f5f5f5)',
                 fontSize: '0.82rem',
                 width: '100%',
                 outline: 'none',
@@ -173,7 +173,7 @@ export default function ScheduleTableModal({ isOpen, onClose, scheduleData, isEn
             />
           </div>
 
-          <span style={{ fontSize: '0.78rem', color: 'var(--text-muted, #94a3b8)', fontWeight: '600' }}>
+          <span style={{ fontSize: '0.78rem', color: 'var(--text-muted, #a3a3a3)', fontWeight: '600' }}>
             {isEn ? `Showing ${scheduleEntries.length} records` : `معروض ${scheduleEntries.length} يوم`}
           </span>
         </div>
@@ -192,12 +192,12 @@ export default function ScheduleTableModal({ isOpen, onClose, scheduleData, isEn
               style={{
                 position: 'sticky',
                 top: 0,
-                backgroundColor: 'var(--bg-secondary, #1e293b)',
+                backgroundColor: 'var(--bg-secondary, rgba(10, 10, 10, 0.88))',
                 zIndex: 2,
                 boxShadow: '0 2px 4px rgba(0, 0, 0, 0.2)',
               }}
             >
-              <tr style={{ color: 'var(--text-muted, #94a3b8)', borderBottom: '1px solid var(--border-subtle, rgba(255, 255, 255, 0.1))' }}>
+              <tr style={{ color: 'var(--text-muted, #a3a3a3)', borderBottom: '1px solid var(--border-subtle, rgba(255, 255, 255, 0.1))' }}>
                 <th style={{ padding: '12px 10px', fontWeight: '700' }}>{isEn ? 'Date' : 'التاريخ'}</th>
                 <th style={{ padding: '12px 10px', fontWeight: '700' }}>{isEn ? 'Fajr' : 'الفجر'}</th>
                 <th style={{ padding: '12px 10px', fontWeight: '700' }}>{isEn ? 'Sunrise' : 'الشروق'}</th>
@@ -210,7 +210,7 @@ export default function ScheduleTableModal({ isOpen, onClose, scheduleData, isEn
             <tbody>
               {scheduleEntries.length === 0 ? (
                 <tr>
-                  <td colSpan={7} style={{ textAlign: 'center', padding: '32px', color: 'var(--text-muted, #94a3b8)' }}>
+                  <td colSpan={7} style={{ textAlign: 'center', padding: '32px', color: 'var(--text-muted, #a3a3a3)' }}>
                     {isEn ? 'No dates match your search' : 'لا توجد تواريخ تطابق البحث'}
                   </td>
                 </tr>
@@ -228,7 +228,7 @@ export default function ScheduleTableModal({ isOpen, onClose, scheduleData, isEn
                           fontWeight: row.isToday ? '700' : '400',
                         }}
                       >
-                        <td style={{ padding: '10px', color: row.isToday ? 'var(--status-on-time, #ffffff)' : 'var(--text-primary, #f8fafc)', whiteSpace: 'nowrap' }}>
+                        <td style={{ padding: '10px', color: row.isToday ? 'var(--status-on-time, #ffffff)' : 'var(--text-primary, #f5f5f5)', whiteSpace: 'nowrap' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                             <span>{row.dateStr}</span>
                             {row.isToday && (
@@ -247,22 +247,22 @@ export default function ScheduleTableModal({ isOpen, onClose, scheduleData, isEn
                             )}
                           </div>
                         </td>
-                        <td style={{ padding: '10px', color: 'var(--text-primary, #f8fafc)' }}>
+                        <td style={{ padding: '10px', color: 'var(--text-primary, #f5f5f5)' }}>
                           {row.times?.Fajr ? formatTimeDisplay(row.times.Fajr, timeFmt, lang) : '—'}
                         </td>
-                        <td style={{ padding: '10px', color: 'var(--text-muted, #94a3b8)' }}>
+                        <td style={{ padding: '10px', color: 'var(--text-muted, #a3a3a3)' }}>
                           {row.times?.Sunrise ? formatTimeDisplay(row.times.Sunrise, timeFmt, lang) : '—'}
                         </td>
-                        <td style={{ padding: '10px', color: 'var(--text-primary, #f8fafc)' }}>
+                        <td style={{ padding: '10px', color: 'var(--text-primary, #f5f5f5)' }}>
                           {row.times?.Dhuhr ? formatTimeDisplay(row.times.Dhuhr, timeFmt, lang) : '—'}
                         </td>
-                        <td style={{ padding: '10px', color: 'var(--text-primary, #f8fafc)' }}>
+                        <td style={{ padding: '10px', color: 'var(--text-primary, #f5f5f5)' }}>
                           {row.times?.Asr ? formatTimeDisplay(row.times.Asr, timeFmt, lang) : '—'}
                         </td>
-                        <td style={{ padding: '10px', color: 'var(--text-primary, #f8fafc)' }}>
+                        <td style={{ padding: '10px', color: 'var(--text-primary, #f5f5f5)' }}>
                           {row.times?.Maghrib ? formatTimeDisplay(row.times.Maghrib, timeFmt, lang) : '—'}
                         </td>
-                        <td style={{ padding: '10px', color: 'var(--text-primary, #f8fafc)' }}>
+                        <td style={{ padding: '10px', color: 'var(--text-primary, #f5f5f5)' }}>
                           {row.times?.Isha ? formatTimeDisplay(row.times.Isha, timeFmt, lang) : '—'}
                         </td>
                       </tr>
@@ -286,7 +286,7 @@ export default function ScheduleTableModal({ isOpen, onClose, scheduleData, isEn
             gap: '12px',
           }}
         >
-          <div style={{ fontSize: '0.78rem', color: 'var(--text-muted, #94a3b8)' }}>
+          <div style={{ fontSize: '0.78rem', color: 'var(--text-muted, #a3a3a3)' }}>
             <span>{isEn ? 'All times are stored offline in your browser.' : 'جميع المواقيت مخزنة محلياً في متصفحك وتعمل تلقائياً بدون اتصال بالإنترنت.'}</span>
           </div>
 

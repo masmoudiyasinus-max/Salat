@@ -1,6 +1,69 @@
 import { Coordinates, CalculationMethod, PrayerTimes, Madhab, HighLatitudeRule, Qibla, SunnahTimes } from 'adhan';
 import { toWesternDigits } from './timeUtils.js';
-import { getSettings, saveSettings, savePrayerTimesCache, getSourceScheduleCache } from './storage.js';
+import { getSettings, saveSettings } from './storage.js';
+
+// Mapping internal calculation authority IDs to Aladhan API numerical method IDs
+export const ALADHAN_METHOD_MAP = {
+  '0': 0,
+  '1': 1,
+  '2': 2,
+  '3': 3,
+  '4': 4,
+  '5': 5,
+  '7': 7,
+  '8': 8,
+  '9': 9,
+  '10': 10,
+  '11': 11,
+  '12': 12,
+  '13': 13,
+  '14': 14,
+  '15': 15,
+  '16': 16,
+  '17': 17,
+  '18': 18,
+  '19': 19,
+  '20': 20,
+  '21': 21,
+  mwl: 3,
+  isna: 2,
+  egypt: 5,
+  makkah: 4,
+  karachi: 1,
+  tehran: 7,
+  gulf: 8,
+  kuwait: 9,
+  qatar: 10,
+  singapore: 11,
+  france: 12,
+  turkey: 13,
+  russia: 14,
+  moonsighting: 15,
+  dubai: 16,
+  jakim: 17,
+  tunisia: 18,
+  algeria: 19,
+  indonesia: 20,
+  morocco: 21,
+  auto: 5, // Default fallback
+};
+
+export function getSourceScheduleCache(city = '', country = '', year = '', month = '', method = '') {
+  const cached = getStorageSourceScheduleCache();
+  if (!cached) return null;
+  const cleanReqCity = (city || '').trim().toLowerCase();
+  const cleanReqCountry = (country || '').trim().toLowerCase();
+  const cachedCity = (cached.city || '').trim().toLowerCase();
+  const cachedCountry = (cached.country || '').trim().toLowerCase();
+  if (cleanReqCity && cachedCity && cachedCity !== cleanReqCity) return null;
+  if (cleanReqCountry && cachedCountry && cachedCountry !== cleanReqCountry) return null;
+  if (method && cached.method && String(cached.method) !== String(method)) return null;
+  return cached;
+}
+
+export function setSourceScheduleCache(scheduleData) {
+  saveSourceScheduleCache(scheduleData);
+}
 
 export const CALCULATION_METHODS = [
   { id: 'auto', nameAr: 'تلقائي (حسب الدولة المحددة)', nameEn: 'Automatic (Based on Selected Country)' },
@@ -460,7 +523,7 @@ export async function getPrayerTimesForLocation(city, country, targetDateStr = '
   const cityTimezone = resolveTimezoneForLocation(city, country);
 
   // 1. Priority 1: If an Aladhan multi-day schedule is stored locally in cache, return it
-  const cachedSchedule = getSourceScheduleCache();
+  const cachedSchedule = getSourceScheduleCache(city, country, '', '', options.calculationMethod);
   if (cachedSchedule?.schedule && cachedSchedule.schedule[targetDateFormatted]) {
     const tableTimes = cachedSchedule.schedule[targetDateFormatted];
     return {
@@ -559,12 +622,18 @@ export const TIMEZONE_DEFAULTS = {
   'Australia/Sydney': { country: 'Australia', city: 'Sydney', lat: -33.8688, lng: 151.2093, method: '3', tz: 'Australia/Sydney' },
 };
 
+const GLOBAL_FALLBACK_LOCATION = { country: 'Saudi Arabia', city: 'Riyadh', lat: 24.7136, lng: 46.6753, method: '4', tz: 'Asia/Riyadh' };
+
 /**
  * Resolves location defaults for a timezone identifier.
  */
 export function getDefaultLocationForTimezone(tz) {
-  const t = tz || (typeof Intl !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone : 'Asia/Riyadh');
-  return TIMEZONE_DEFAULTS[t] || TIMEZONE_DEFAULTS['Asia/Riyadh'];
+  try {
+    const t = tz || (typeof Intl !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone : 'Asia/Riyadh');
+    return (TIMEZONE_DEFAULTS && TIMEZONE_DEFAULTS[t]) || (TIMEZONE_DEFAULTS && TIMEZONE_DEFAULTS['Asia/Riyadh']) || GLOBAL_FALLBACK_LOCATION;
+  } catch {
+    return GLOBAL_FALLBACK_LOCATION;
+  }
 }
 
 /**
@@ -580,7 +649,8 @@ export function getQiblaBearing(latitude, longitude) {
 }
 
 /**
- * Automatically initializes location and prayer times for any user worldwide on first load.
+ * Automatically initializes location from browser timezone if not previously set.
+ * Strictly prevents writing hardcoded/fake locations or mock prayer times.
  */
 export function autoDetectAndInitializeWorldLocation() {
   try {
@@ -589,41 +659,20 @@ export function autoDetectAndInitializeWorldLocation() {
       return currentSettings;
     }
 
-    const defaultLoc = getDefaultLocationForTimezone();
-    const updatedSettings = {
-      ...currentSettings,
-      country: currentSettings?.country || defaultLoc.country,
-      city: currentSettings?.city || defaultLoc.city,
-    };
+    const browserTz = typeof Intl !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone : '';
+    const tzLoc = (browserTz && TIMEZONE_DEFAULTS && TIMEZONE_DEFAULTS[browserTz]) ? TIMEZONE_DEFAULTS[browserTz] : null;
 
-    saveSettings(updatedSettings);
-
-    const today = new Date();
-    const targetDateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-    const res = calculateOfflinePrayerTimes(defaultLoc.lat, defaultLoc.lng, today, {
-      calculationMethod: updatedSettings.calculationMethod,
-      asrMadhab: updatedSettings.asrMadhab,
-      timezone: defaultLoc.tz,
-      countryName: updatedSettings.country,
-    });
-
-    if (res && res.success && res.times) {
-      const hh = String(today.getHours()).padStart(2, '0');
-      const mm = String(today.getMinutes()).padStart(2, '0');
-      const timeNow = toWesternDigits(`${hh}:${mm}`);
-
-      const mergedTimes = {
-        ...res.times,
-        timezone: defaultLoc.tz,
-        lastSyncedDate: targetDateStr,
-        lastSyncedTime: timeNow,
-        calculationMethod: updatedSettings.calculationMethod || 'auto',
-        asrMadhab: updatedSettings.asrMadhab || 'shafi',
-        source: 'حساب فلكي دقيق (adhan-js)',
+    if (tzLoc) {
+      const updatedSettings = {
+        ...currentSettings,
+        country: currentSettings?.country || tzLoc.country,
+        city: currentSettings?.city || tzLoc.city,
       };
-      savePrayerTimesCache(mergedTimes);
+      saveSettings(updatedSettings);
+      return updatedSettings;
     }
-    return updatedSettings;
+
+    return currentSettings;
   } catch (err) {
     console.error('Error during auto location initialization:', err);
     return null;

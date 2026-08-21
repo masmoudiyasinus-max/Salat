@@ -48,7 +48,10 @@ export const KEYS = {
   RE_TOGGLE_HISTORY: 'prayer_tracker_re_toggle_history',
   ERROR_LOGS: 'prayer_tracker_error_logs_v1',
   SOURCE_SCHEDULE: 'prayer_tracker_source_schedule_v1',
+  DAILY_SUGGESTIONS: 'prayer_tracker_daily_suggestions',
 };
+
+export const DEFAULT_NATURE_WALLPAPER = '/nature-meadow.jpg';
 
 const DEFAULT_SETTINGS = {
   geminiApiKey: '',
@@ -56,8 +59,8 @@ const DEFAULT_SETTINGS = {
   gracePeriodMinutes: 15,
   city: '',
   country: '',
-  customBgImages: [],
-  activeCustomBgImage: '',
+  customBgImages: [DEFAULT_NATURE_WALLPAPER],
+  activeCustomBgImage: DEFAULT_NATURE_WALLPAPER,
   bgMode: 'makkah',
   makkahVideoId: 'm9-Umj3aL1I',
   madinahVideoId: 'Rs7St51oDDc',
@@ -209,7 +212,7 @@ export async function compressImageFile(file, maxWidth = 1920, maxHeight = 1080,
           if (!compressedDataUrl.startsWith('data:image/webp')) {
             compressedDataUrl = canvas.toDataURL('image/jpeg', quality);
           }
-        } catch (canvasErr) {
+        } catch {
           compressedDataUrl = canvas.toDataURL('image/jpeg', quality);
         }
 
@@ -251,7 +254,7 @@ export function safeSetLocalStorageItem(key, valueString, retryStrategy = null) 
 export function getNaflRecords() {
   const data = localStorage.getItem(KEYS.NAFL_RECORDS);
   if (!data) return [];
-  try { return JSON.parse(data); } catch(e) { return []; }
+  try { return JSON.parse(data); } catch { return []; }
 }
 
 export function saveNaflRecords(records) {
@@ -280,11 +283,20 @@ export function toggleNaflRecord(date, naflId) {
 
 export function getSettings() {
   const data = localStorage.getItem(KEYS.SETTINGS);
-  if (!data) return DEFAULT_SETTINGS;
+  if (!data) return { ...DEFAULT_SETTINGS };
   try {
-    return { ...DEFAULT_SETTINGS, ...JSON.parse(data) };
-  } catch (e) {
-    return DEFAULT_SETTINGS;
+    const parsed = { ...DEFAULT_SETTINGS, ...JSON.parse(data) };
+    if (!Array.isArray(parsed.customBgImages) || parsed.customBgImages.length === 0) {
+      parsed.customBgImages = [DEFAULT_NATURE_WALLPAPER];
+    } else if (!parsed.customBgImages.includes(DEFAULT_NATURE_WALLPAPER)) {
+      parsed.customBgImages = [DEFAULT_NATURE_WALLPAPER, ...parsed.customBgImages];
+    }
+    if (!parsed.activeCustomBgImage) {
+      parsed.activeCustomBgImage = parsed.customBgImages[0] || DEFAULT_NATURE_WALLPAPER;
+    }
+    return parsed;
+  } catch {
+    return { ...DEFAULT_SETTINGS };
   }
 }
 
@@ -311,7 +323,7 @@ export function getPrayerTimesCache() {
   if (!data) return DEFAULT_PRAYER_TIMES;
   try {
     return JSON.parse(data);
-  } catch (e) {
+  } catch {
     return DEFAULT_PRAYER_TIMES;
   }
 }
@@ -339,6 +351,8 @@ export function saveSourceScheduleCache(scheduleData) {
   safeSetLocalStorageItem(KEYS.SOURCE_SCHEDULE, JSON.stringify(scheduleData));
 }
 
+export const setSourceScheduleCache = saveSourceScheduleCache;
+
 export function getTimesFromSourceSchedule(dateStr) {
   if (!dateStr) return null;
   const cache = getSourceScheduleCache();
@@ -362,7 +376,7 @@ export function getRecords() {
     const parsed = JSON.parse(data);
     if (!Array.isArray(parsed)) return [];
     return parsed;
-  } catch (e) {
+  } catch {
     return [];
   }
 }
@@ -591,7 +605,7 @@ export function getChatSessions() {
     }
     saveChatSessions(sanitized);
     return sanitized;
-  } catch (e) {
+  } catch {
     const defaultSession = createInitialChatSession();
     localStorage.setItem(KEYS.CHAT_SESSIONS, JSON.stringify([defaultSession]));
     localStorage.setItem(KEYS.ACTIVE_SESSION_ID, defaultSession.id);
@@ -662,7 +676,7 @@ export function updateSessionMessages(sessionId, messages) {
   if (idx >= 0) {
     let title = sessions[idx].title;
     const firstUserMsg = messages.find((m) => m.sender === 'user');
-    if (firstUserMsg && (title.startsWith('محادثة جديدة') || title.startsWith('محادثة رئيسية'))) {
+    if (firstUserMsg && !sessions[idx].titleFinalized && (title.startsWith('محادثة جديدة') || title.startsWith('محادثة رئيسية'))) {
       const msgStr = typeof firstUserMsg.text === 'string' ? firstUserMsg.text : String(firstUserMsg.text || '');
       title = msgStr.slice(0, 30) + (msgStr.length > 30 ? '...' : '');
     }
@@ -678,7 +692,7 @@ export function updateSessionMessages(sessionId, messages) {
   return sessions;
 }
 
-export function updateSessionTitle(sessionId, newTitle) {
+export function updateSessionTitle(sessionId, newTitle, isFinalized = false) {
   if (!sessionId || !newTitle || !newTitle.trim()) return getChatSessions();
   const sessions = getChatSessions();
   const idx = sessions.findIndex((s) => s.id === sessionId);
@@ -686,6 +700,7 @@ export function updateSessionTitle(sessionId, newTitle) {
     sessions[idx] = {
       ...sessions[idx],
       title: newTitle.trim(),
+      titleFinalized: Boolean(isFinalized),
       updatedAt: new Date().toISOString(),
     };
     saveChatSessions(sessions);
@@ -719,6 +734,18 @@ function createInitialChatSession() {
 
 
 export function computeSummaryStats(records) {
+  if (!Array.isArray(records)) {
+    return {
+      onTime: 0,
+      late: 0,
+      qada: 0,
+      missed: 0,
+      avgDelay: 0,
+      maxStreak: 0,
+      currentStreak: 0,
+    };
+  }
+
   let onTime = 0;
   let late = 0;
   let qada = 0;
@@ -726,40 +753,64 @@ export function computeSummaryStats(records) {
   let totalDelay = 0;
   let delayCount = 0;
 
+  const dateGroups = {};
   records.forEach((r) => {
+    if (!r) return;
     if (r.status === 'on_time') onTime++;
     else if (r.status === 'late') late++;
     else if (r.status === 'qada') qada++;
     else if (r.status === 'missed') missed++;
 
-    if (r.delay_minutes > 0) {
+    if (typeof r.delay_minutes === 'number' && r.delay_minutes > 0) {
       totalDelay += r.delay_minutes;
       delayCount++;
+    }
+
+    if (r.date) {
+      if (!dateGroups[r.date]) dateGroups[r.date] = [];
+      dateGroups[r.date].push(r);
     }
   });
 
   const avgDelay = delayCount > 0 ? Math.round(totalDelay / delayCount) : 0;
 
-  const dateGroups = {};
-  records.forEach((r) => {
-    if (!dateGroups[r.date]) dateGroups[r.date] = [];
-    dateGroups[r.date].push(r);
-  });
-
-  const sortedDates = Object.keys(dateGroups).sort().reverse();
-  let currentStreak = 0;
+  // Chronological ascending sort for daily continuity evaluation
+  const sortedDates = Object.keys(dateGroups).sort();
+  let tempStreak = 0;
   let maxStreak = 0;
+  let prevDateStr = null;
 
   for (const date of sortedDates) {
-    const dayPrayers = dateGroups[date];
+    const dayPrayers = dateGroups[date] || [];
     const allOnTime =
       dayPrayers.length >= 5 && dayPrayers.every((p) => p.status === 'on_time');
 
     if (allOnTime) {
-      currentStreak++;
-      if (currentStreak > maxStreak) maxStreak = currentStreak;
+      if (prevDateStr) {
+        const [y1, m1, d1] = prevDateStr.split('-').map(Number);
+        const [y2, m2, d2] = date.split('-').map(Number);
+        const utc1 = Date.UTC(y1, m1 - 1, d1);
+        const utc2 = Date.UTC(y2, m2 - 1, d2);
+        const diffInDays = Math.round((utc2 - utc1) / (1000 * 60 * 60 * 24));
+
+        if (diffInDays === 1) {
+          tempStreak++;
+        } else {
+          // Gap > 1 day resets streak to 1 for this qualifying day
+          tempStreak = 1;
+        }
+      } else {
+        tempStreak = 1;
+      }
+
+      prevDateStr = date;
+      if (tempStreak > maxStreak) {
+        maxStreak = tempStreak;
+      }
     } else {
-      currentStreak = 0;
+      // Day is recorded but not all on-time -> breaks streak
+      tempStreak = 0;
+      prevDateStr = null;
     }
   }
 
@@ -770,5 +821,6 @@ export function computeSummaryStats(records) {
     missed,
     avgDelay,
     maxStreak,
+    currentStreak: tempStreak,
   };
 }

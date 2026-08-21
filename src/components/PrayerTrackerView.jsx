@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import ReactDOM from 'react-dom';
 import {
   CheckCircle,
-  XCircle,
   Clock,
   Sun,
   Sunrise,
@@ -10,13 +10,9 @@ import {
   Lock,
   X,
   BookOpen,
-  Navigation,
-  Settings,
-  Info,
 } from 'lucide-react';
 import {
   PRAYER_NAMES,
-  NAFL_PRAYERS,
   OBLIGATORY_PRAYER_IDS,
   APP_EVENTS,
   getRecords,
@@ -26,22 +22,19 @@ import {
   savePrayerTimesCache,
   toWesternDigits,
   calculateNightTimes,
-  getNaflRecords,
-  toggleNaflRecord,
   getCityNowDate,
   getCityTodayDateStr,
   timeToMinutes,
-  computeSummaryStats,
-  formatTimeDisplay,
   getCurrentObligatoryPrayerId,
   applyPrayerOffsets,
-  getSourceScheduleCache,
   KEYS,
 } from '../services/storage';
-import { getPrayerTimesForLocation, getDefaultLocationForTimezone, resolveTimezoneForLocation } from '../services/adhanCalculator';
+import { fetchAladhanPrayerTimesForLocation } from '../services/aladhanApiService';
+import { resolveTimezoneForLocation, TIMEZONE_DEFAULTS } from '../services/adhanCalculator';
 import { requestFreshLocationFromScratch } from '../services/permissionService';
 import { getTranslation } from '../services/i18n';
-import { DATA_STATUS, getPrayerTimesStatus, isValidTimeString } from '../services/dataReadiness';
+import { DATA_STATUS, getPrayerTimesStatus } from '../services/dataReadiness';
+import { dispatchMuneerSignal, MUNEER_SIGNALS } from '../services/muneerSignalService.js';
 import ActivePrayerHero from './ActivePrayerHero';
 
 const PRAYER_ICONS = {
@@ -56,9 +49,39 @@ const PRAYER_ICONS = {
 export default function PrayerTrackerView({ settings, onRecordUpdated, onNavigateToSettings }) {
   const lang = settings?.language || 'ar';
   const t = (k, fb) => getTranslation(lang, k, fb);
-  const [prayerTimes, setPrayerTimes] = useState(getPrayerTimesCache);
+  const [isLoadingPrayerTimes, setIsLoadingPrayerTimes] = useState(false);
+  const [prayerTimes, setPrayerTimes] = useState(() => {
+    try {
+      const cached = getPrayerTimesCache();
+      const browserTz = typeof Intl !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone : '';
+      const tzLoc = (browserTz && TIMEZONE_DEFAULTS && TIMEZONE_DEFAULTS[browserTz]) ? TIMEZONE_DEFAULTS[browserTz] : null;
+      const effectiveCountry = (settings?.country || tzLoc?.country || '').trim();
+      const effectiveCity = (settings?.city || tzLoc?.city || '').trim();
+      const todayStr = getCityTodayDateStr(settings?.timezone || tzLoc?.tz);
+
+      // STRICT: Only use cache if all 5 prayers exist, belongs to Aladhan API, matches today's date and exact city/country
+      if (
+        cached &&
+        effectiveCity &&
+        effectiveCountry &&
+        cached.lastSyncedDate === todayStr &&
+        cached.Fajr &&
+        cached.Dhuhr &&
+        cached.Asr &&
+        cached.Maghrib &&
+        cached.Isha &&
+        (cached.source || '').includes('Aladhan') &&
+        (cached.city || '').toLowerCase() === effectiveCity.toLowerCase() &&
+        (cached.country || '').toLowerCase() === effectiveCountry.toLowerCase()
+      ) {
+        return cached;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  });
   const [records, setRecords] = useState(getRecords);
-  const [naflRecords, setNaflRecords] = useState(getNaflRecords);
 
   // Modal Sub-window State for Obligatory Prayers
   const [activeModalPrayer, setActiveModalPrayer] = useState(null);
@@ -68,8 +91,15 @@ export default function PrayerTrackerView({ settings, onRecordUpdated, onNavigat
 
   const handleQuickAutoDetectLocation = async () => {
     setIsDetectingLocationQuick(true);
-    const res = await requestFreshLocationFromScratch(() => {
-      setPrayerTimes(getPrayerTimesCache());
+    const res = await requestFreshLocationFromScratch((freshData) => {
+      if (freshData?.times) {
+        setPrayerTimes(freshData.times);
+      } else {
+        const cached = getPrayerTimesCache();
+        if (cached && (cached.source || '').includes('Aladhan') && cached.Fajr) {
+          setPrayerTimes(cached);
+        }
+      }
     });
     setIsDetectingLocationQuick(false);
     if (!res.success) {
@@ -81,18 +111,57 @@ export default function PrayerTrackerView({ settings, onRecordUpdated, onNavigat
     }
   };
 
+  // Selected Date State for Browsing Timeline
+  const [selectedDate, setSelectedDate] = useState(() => getCityTodayDateStr(prayerTimes?.timezone));
+
+  // Sync state on external update events
+  useEffect(() => {
+    const handleRecordsChange = () => setRecords(getRecords());
+    const handleTimesChange = (e) => {
+      if (e.detail) {
+        setPrayerTimes(e.detail);
+      } else {
+        setPrayerTimes(getPrayerTimesCache());
+      }
+    };
+
+    window.addEventListener(APP_EVENTS.RECORDS_UPDATED, handleRecordsChange);
+    window.addEventListener(APP_EVENTS.PRAYER_TIMES_UPDATED, handleTimesChange);
+
+    return () => {
+      window.removeEventListener(APP_EVENTS.RECORDS_UPDATED, handleRecordsChange);
+      window.removeEventListener(APP_EVENTS.PRAYER_TIMES_UPDATED, handleTimesChange);
+    };
+  }, []);
+
+  // Update selectedDate when timezone changes
+  useEffect(() => {
+    const tz = prayerTimes?.timezone || resolveTimezoneForLocation(settings?.city, settings?.country);
+    if (tz) {
+      setSelectedDate(getCityTodayDateStr(tz));
+    }
+  }, [prayerTimes?.timezone, settings?.city, settings?.country]);
+
+  // Keep system clock in sync
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const tz = prayerTimes?.timezone || resolveTimezoneForLocation(settings?.city, settings?.country);
+      const currentToday = getCityTodayDateStr(tz);
+      setSelectedDate((prev) => {
+        if (prev === currentToday) return prev;
+        return currentToday;
+      });
+    }, 60000);
+    return () => clearInterval(timer);
+  }, [prayerTimes?.timezone, settings?.city, settings?.country]);
+
   const effectiveTimezone = prayerTimes?.timezone || resolveTimezoneForLocation(settings?.city, settings?.country);
-  const tzOpt = (effectiveTimezone && typeof effectiveTimezone === 'string' && effectiveTimezone.includes('/')) ? { timeZone: effectiveTimezone } : {};
 
   const [nowTime, setNowTime] = useState(() => {
     const d = getCityNowDate(effectiveTimezone);
     return isNaN(d.getTime()) ? new Date() : d;
   });
-  const safeNow = nowTime && !isNaN(nowTime.getTime()) ? nowTime : new Date();
-  const year = safeNow.getFullYear();
-  const month = String(safeNow.getMonth() + 1).padStart(2, '0');
-  const day = String(safeNow.getDate()).padStart(2, '0');
-  const selectedDate = `${year}-${month}-${day}`;
+  const safeNow = useMemo(() => (nowTime && !isNaN(nowTime.getTime()) ? nowTime : new Date()), [nowTime]);
 
   useEffect(() => {
     const updateClock = () => {
@@ -114,98 +183,85 @@ export default function PrayerTrackerView({ settings, onRecordUpdated, onNavigat
 
   useEffect(() => {
     setRecords(getRecords());
-    setNaflRecords(getNaflRecords());
   }, [selectedDate]);
 
-  // Listen to prayer times updates from settings or background recalculations
-  useEffect(() => {
-    const handleTimesUpdated = (e) => {
-      if (e?.detail) {
-        setPrayerTimes(e.detail);
-      } else {
-        setPrayerTimes(getPrayerTimesCache());
-      }
-    };
-    window.addEventListener(APP_EVENTS.PRAYER_TIMES_UPDATED, handleTimesUpdated);
-    return () => window.removeEventListener(APP_EVENTS.PRAYER_TIMES_UPDATED, handleTimesUpdated);
-  }, []);
-
-  // Instant Mathematical Astronomical Calculation via adhan-js whenever location, method, or date changes
+  // Instant Aladhan API fetch & sync whenever location or selected date changes
   useEffect(() => {
     let isMounted = true;
     async function autoCalculatePrayerTimes() {
       const targetDateStr = selectedDate;
       const cached = getPrayerTimesCache();
 
-      // 1. Check if an imported schedule is stored locally and contains this date
-      const importedSchedule = getSourceScheduleCache();
-      if (importedSchedule?.schedule && importedSchedule.schedule[targetDateStr]) {
-        const tableTimes = importedSchedule.schedule[targetDateStr];
-        const now = new Date();
-        const hh = String(now.getHours()).padStart(2, '0');
-        const mm = String(now.getMinutes()).padStart(2, '0');
-        const timeNow = toWesternDigits(`${hh}:${mm}`);
+      const browserTz = typeof Intl !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone : '';
+      const tzLoc = (browserTz && TIMEZONE_DEFAULTS && TIMEZONE_DEFAULTS[browserTz]) ? TIMEZONE_DEFAULTS[browserTz] : null;
+      const effectiveCountry = (settings?.country || tzLoc?.country || '').trim();
+      const effectiveCity = (settings?.city || tzLoc?.city || '').trim();
 
-        const mergedTimes = {
-          ...tableTimes,
-          timezone: resolveTimezoneForLocation(settings?.city, settings?.country),
-          lastSyncedDate: targetDateStr,
-          lastSyncedTime: timeNow,
-          source: `جدول مستورد من الموقع: ${importedSchedule.domain || 'المصدر'}`,
-          isImportedSchedule: true,
-          domain: importedSchedule.domain,
-          totalDaysCount: importedSchedule.totalDays,
-        };
-        setPrayerTimes(mergedTimes);
-        savePrayerTimesCache(mergedTimes);
+      if (!effectiveCity || !effectiveCountry) {
+        setPrayerTimes(null);
+        setIsLoadingPrayerTimes(false);
         return;
       }
 
-      // If already accurately calculated with adhan-js for this exact date, city, and method, we're good
+      // 1. Check if cache matches this exact date, city, country and originated from Aladhan API
       if (
         cached &&
         cached.lastSyncedDate === targetDateStr &&
         cached.Fajr &&
-        cached.source &&
-        cached.source.includes('adhan-js') &&
-        cached.calculationMethod === (settings?.calculationMethod || 'auto') &&
-        cached.asrMadhab === (settings?.asrMadhab || 'shafi')
+        cached.Dhuhr &&
+        cached.Asr &&
+        cached.Maghrib &&
+        cached.Isha &&
+        (cached.source || '').includes('Aladhan') &&
+        (cached.city || '').toLowerCase() === effectiveCity.toLowerCase() &&
+        (cached.country || '').toLowerCase() === effectiveCountry.toLowerCase()
       ) {
+        setPrayerTimes(cached);
+        setIsLoadingPrayerTimes(false);
         return;
       }
 
-      const defaultLoc = getDefaultLocationForTimezone();
-      const effectiveCity = settings?.city || defaultLoc.city;
-      const effectiveCountry = settings?.country || defaultLoc.country;
+      // 2. Clear unverified times & set loading state
+      setPrayerTimes(null);
+      setIsLoadingPrayerTimes(true);
 
+      // 3. Fetch from Aladhan API Service
       try {
-        const res = await getPrayerTimesForLocation(
+        const res = await fetchAladhanPrayerTimesForLocation(
           effectiveCity,
           effectiveCountry,
-          targetDateStr,
-          settings
+          targetDateStr
         );
 
-        if (isMounted && res && res.success && res.times) {
-          const now = new Date();
-          const hh = String(now.getHours()).padStart(2, '0');
-          const mm = String(now.getMinutes()).padStart(2, '0');
-          const timeNow = toWesternDigits(`${hh}:${mm}`);
+        if (isMounted) {
+          if (res && res.success && res.times) {
+            const now = new Date();
+            const hh = String(now.getHours()).padStart(2, '0');
+            const mm = String(now.getMinutes()).padStart(2, '0');
+            const timeNow = toWesternDigits(`${hh}:${mm}`);
 
-          const mergedTimes = {
-            ...res.times,
-            timezone: res.timezone || prayerTimes?.timezone || '',
-            lastSyncedDate: targetDateStr,
-            lastSyncedTime: timeNow,
-            calculationMethod: settings?.calculationMethod || 'auto',
-            asrMadhab: settings?.asrMadhab || 'shafi',
-            source: 'حساب فلكي دقيق (adhan-js)',
-          };
-          setPrayerTimes(mergedTimes);
-          savePrayerTimesCache(mergedTimes);
+            const mergedTimes = {
+              ...res.times,
+              city: effectiveCity,
+              country: effectiveCountry,
+              timezone: res.timezone || resolveTimezoneForLocation(effectiveCity, effectiveCountry) || '',
+              lastSyncedDate: targetDateStr,
+              lastSyncedTime: timeNow,
+              source: 'واجهة Aladhan API الرسمية (api.aladhan.com)',
+            };
+            setPrayerTimes(mergedTimes);
+            savePrayerTimesCache(mergedTimes);
+          } else {
+            setPrayerTimes(null);
+          }
+          setIsLoadingPrayerTimes(false);
         }
       } catch (err) {
-        console.error('Auto calculate caught error:', err);
+        console.error('Aladhan API fetch error:', err);
+        if (isMounted) {
+          setPrayerTimes(null);
+          setIsLoadingPrayerTimes(false);
+        }
       }
     }
 
@@ -213,31 +269,17 @@ export default function PrayerTrackerView({ settings, onRecordUpdated, onNavigat
     return () => {
       isMounted = false;
     };
-  }, [settings.city, settings.country, settings.calculationMethod, settings.asrMadhab, selectedDate]);
-
-
-  const safeRecords = Array.isArray(records) ? records : [];
-  const safeNaflRecords = Array.isArray(naflRecords) ? naflRecords : [];
+  }, [settings?.city, settings?.country, selectedDate]);
 
   const dateRecords = useMemo(
-    () => safeRecords.filter((r) => r && r.date === selectedDate),
-    [safeRecords, selectedDate]
-  );
-  const dateNaflRecords = useMemo(
-    () => safeNaflRecords.filter((r) => r && r.date === selectedDate),
-    [safeNaflRecords, selectedDate]
+    () => (Array.isArray(records) ? records : []).filter((r) => r && r.date === selectedDate),
+    [records, selectedDate]
   );
 
   // Effective Prayer Times with user-specified offsets applied
   const effectivePrayerTimes = useMemo(
     () => applyPrayerOffsets(prayerTimes, settings?.prayerOffsets),
     [prayerTimes, settings?.prayerOffsets]
-  );
-
-  // Night Calculation (Maghrib to Fajr)
-  const nightTimes = useMemo(
-    () => calculateNightTimes(effectivePrayerTimes?.Maghrib, effectivePrayerTimes?.Fajr),
-    [effectivePrayerTimes?.Maghrib, effectivePrayerTimes?.Fajr]
   );
 
   // Live Countup and Countdown Timers Computation for All Islamic Timeline Events (Continuous Rolling Timeline)
@@ -368,12 +410,10 @@ export default function PrayerTrackerView({ settings, onRecordUpdated, onNavigat
       remainingSecs,
       remM,
       remS,
-      isAfterGracePeriod: elapsedSecs > (settings.gracePeriodMinutes ?? 15) * 60,
+      isAfterGracePeriod: elapsedSecs > (settings?.gracePeriodMinutes ?? 15) * 60,
       isPast30Minutes: elapsedSecs > 30 * 60,
     };
-  }, [safeNow, prayerTimes, settings?.gracePeriodMinutes]);
-
-
+  }, [safeNow, effectivePrayerTimes, settings?.gracePeriodMinutes]);
 
   const calculateDelay = (adhanTimeStr, performedTimeStr) => {
     if (!adhanTimeStr || !performedTimeStr) return 0;
@@ -388,69 +428,43 @@ export default function PrayerTrackerView({ settings, onRecordUpdated, onNavigat
     return diff;
   };
 
-  // Helper to determine if Shariah Midnight (منتصف الليل الشرعي) has passed
-  const isMidnightArrived = () => {
-    if (!prayerTimes?.Maghrib || !prayerTimes?.Fajr) return false;
-    const maghribT = prayerTimes.Maghrib;
-    const fajrT = prayerTimes.Fajr;
-    const nTimes = calculateNightTimes(maghribT, fajrT);
-    if (!nTimes) return false;
-
-    const [mH, mM] = maghribT.split(':').map(Number);
-    const [fH, fM] = fajrT.split(':').map(Number);
-    const currentMins = safeNow.getHours() * 60 + safeNow.getMinutes();
-    const fajrMins = fH * 60 + fM;
-
-    // Calculate exact midnight timestamp for the relevant night
-    const halfNightMs = Math.floor((nTimes.nightDurationMinutes * 60 * 1000) / 2);
-    
-    let maghribDate = new Date(safeNow.getTime());
-    if (currentMins < fajrMins) {
-      // Early morning before Fajr: Night started yesterday evening!
-      maghribDate.setDate(maghribDate.getDate() - 1);
-    }
-    maghribDate.setHours(mH, mM, 0, 0);
-
-    const midnightTimeMs = maghribDate.getTime() + halfNightMs;
-    return safeNow.getTime() >= midnightTimeMs;
-  };
-
-
   // Lock check: Disable access ONLY if prayer adhan time has not arrived yet today
-  const isPrayerTimeArrived = (adhanTimeStr, prayerId) => {
+  const isPrayerTimeArrived = useCallback((adhanTimeStr) => {
     if (!adhanTimeStr) return true;
     if (selectedDate < getCityTodayDateStr(prayerTimes?.timezone)) return true; // Past dates are ALWAYS unlocked!
     const timeMins = timeToMinutes(adhanTimeStr);
     if (timeMins === -1) return true;
     const currentMins = safeNow.getHours() * 60 + safeNow.getMinutes();
     return currentMins >= timeMins;
-  };
+  }, [selectedDate, prayerTimes?.timezone, safeNow]);
 
-  // Check if next prayer adhan time (or Sunrise for Fajr, or Shariah Midnight for Isha) has arrived
-  const isNextPrayerTimeArrived = (currentPrayerId) => {
+  // Check if next prayer adhan time (or Sunrise for Fajr) has arrived
+  const isNextPrayerTimeArrived = useCallback((currentPrayerId) => {
     if (selectedDate < getCityTodayDateStr(effectivePrayerTimes?.timezone || prayerTimes?.timezone)) return true; // Past dates always considered next prayer arrived!
     if (!effectivePrayerTimes) return false;
-    const validObligatory = OBLIGATORY_PRAYER_IDS;
-    const idx = validObligatory.indexOf(currentPrayerId);
-    if (idx === -1) return false;
 
-    const nextId = validObligatory[(idx + 1) % validObligatory.length];
-    
-    if (nextId === 'Fajr') {
-      const sunriseTime = effectivePrayerTimes?.Sunrise;
-      if (!sunriseTime) return false;
-      return isPrayerTimeArrived(sunriseTime);
+    switch (currentPrayerId) {
+      case 'Fajr': {
+        const sunriseTime = effectivePrayerTimes?.Sunrise;
+        return sunriseTime ? isPrayerTimeArrived(sunriseTime) : false;
+      }
+      case 'Dhuhr':
+        return isPrayerTimeArrived(effectivePrayerTimes?.Asr);
+      case 'Asr':
+        return isPrayerTimeArrived(effectivePrayerTimes?.Maghrib);
+      case 'Maghrib':
+        return isPrayerTimeArrived(effectivePrayerTimes?.Isha);
+      case 'Isha':
+        // Isha window continues overnight until tomorrow's Fajr.
+        // On today's calendar date, next day's Fajr has not arrived yet.
+        return false;
+      default:
+        return false;
     }
-
-    if (nextId === 'Isha') {
-      return isMidnightArrived();
-    }
-
-    return isPrayerTimeArrived(effectivePrayerTimes[nextId], nextId);
-  };
+  }, [selectedDate, effectivePrayerTimes, prayerTimes?.timezone, isPrayerTimeArrived]);
 
   // Automatic Real-Time Status Determination
-  const getAutoEvaluatedStatus = (prayerId, adhanTimeStr) => {
+  const getAutoEvaluatedStatus = useCallback((prayerId, adhanTimeStr) => {
     const rec = dateRecords.find((r) => r.prayer_name === prayerId);
     const isToday = true;
 
@@ -460,7 +474,7 @@ export default function PrayerTrackerView({ settings, onRecordUpdated, onNavigat
     }
 
     // 2. If prayer adhan time has not arrived yet today -> unarrived
-    if (isToday && !isPrayerTimeArrived(adhanTimeStr, prayerId)) {
+    if (isToday && !isPrayerTimeArrived(adhanTimeStr)) {
       return 'unarrived';
     }
 
@@ -473,7 +487,7 @@ export default function PrayerTrackerView({ settings, onRecordUpdated, onNavigat
 
     // 4. Prayer window is currently active and user HAS NOT recorded it yet -> unperformed (none)
     return 'none';
-  };
+  }, [dateRecords, isPrayerTimeArrived, isNextPrayerTimeArrived]);
 
   // Automatic Real-Time Persistence Evaluator & Stale Cleanup for TRULY Missed Prayers
   useEffect(() => {
@@ -524,14 +538,14 @@ export default function PrayerTrackerView({ settings, onRecordUpdated, onNavigat
       saveRecords(cleanedRecords);
       setRecords([...cleanedRecords]);
     }
-  }, [selectedDate, prayerTimes]);
+  }, [selectedDate, effectivePrayerTimes, isNextPrayerTimeArrived, isPrayerTimeArrived]);
 
   // Persistent Re-toggle History Manager (track: performed -> cancelled -> re-performed)
   const getToggleHistory = () => {
     try {
       const raw = localStorage.getItem(KEYS.RE_TOGGLE_HISTORY) || localStorage.getItem('prayer_re_toggle_history');
       return raw ? JSON.parse(raw) : {};
-    } catch (e) {
+    } catch {
       return {};
     }
   };
@@ -539,7 +553,7 @@ export default function PrayerTrackerView({ settings, onRecordUpdated, onNavigat
   const saveToggleHistory = (historyObj) => {
     try {
       localStorage.setItem(KEYS.RE_TOGGLE_HISTORY, JSON.stringify(historyObj));
-    } catch (e) {}
+    } catch {}
   };
 
   const isReToggleLocked = (prayerId) => {
@@ -583,7 +597,7 @@ export default function PrayerTrackerView({ settings, onRecordUpdated, onNavigat
     const performedHHMM = timeOverride || currentHHMM;
 
     const delay = calculateDelay(adhanTime, performedHHMM);
-    const grace = settings.gracePeriodMinutes ?? 15;
+    const grace = settings?.gracePeriodMinutes ?? 15;
 
     let status = customStatus || (delay <= grace ? 'on_time' : 'late');
 
@@ -600,204 +614,14 @@ export default function PrayerTrackerView({ settings, onRecordUpdated, onNavigat
     const updated = upsertRecord(newRec);
     setRecords([...updated]);
     if (onRecordUpdated) onRecordUpdated();
+
+    const todayOblRecords = updated.filter(
+      (r) => r.date === selectedDate && OBLIGATORY_PRAYER_IDS.includes(r.prayer_name) && (r.status === 'on_time' || r.status === 'late')
+    );
+    if (todayOblRecords.length === 5) {
+      dispatchMuneerSignal(MUNEER_SIGNALS.ALL_PRAYERS_COMPLETED_TODAY);
+    }
   };
-
-  const handleMarkMissed = (prayerId) => {
-    const adhanTime = prayerTimes ? prayerTimes[prayerId] : null;
-    if (!adhanTime || !isPrayerTimeArrived(adhanTime)) return;
-
-    const newRec = {
-      date: selectedDate,
-      prayer_name: prayerId,
-      adhan_time: adhanTime,
-      performed_time: '',
-      delay_minutes: 0,
-      status: 'missed',
-    };
-
-    const updated = upsertRecord(newRec);
-    setRecords([...updated]);
-    if (onRecordUpdated) onRecordUpdated();
-  };
-
-  const handleStatusChange = (prayerId, newStatus) => {
-    const adhanTime = prayerTimes ? prayerTimes[prayerId] : null;
-    if (!adhanTime || !isPrayerTimeArrived(adhanTime)) return;
-
-    if (isMissedAndLocked(prayerId) && newStatus !== 'missed') {
-      alert(lang === 'en' ? 'This prayer was recorded as missed and cannot be changed to done according to strict commitment rules.' : 'هذه الصلاة سُجّلت كمتروكة ولا يمكن تحويلها إلى (تم) وفقاً لقواعد الالتزام الصارمة.');
-      return;
-    }
-
-    if (isReToggleLocked(prayerId)) {
-      return;
-    }
-
-    const existing = dateRecords.find((r) => r.prayer_name === prayerId);
-
-    // TOGGLE OFF: If prayer is already recorded with this same status, toggle it off by removing the record!
-    if (existing && existing.status === newStatus) {
-      const toggleKey = `${selectedDate}_${prayerId}`;
-      const history = getToggleHistory();
-      history[toggleKey] = Math.max(history[toggleKey] || 0, 1);
-      saveToggleHistory(history);
-
-      const allRecords = getRecords();
-      const updated = allRecords.filter(r => !(r.date === selectedDate && r.prayer_name === prayerId));
-      saveRecords(updated);
-      setRecords([...updated]);
-      if (onRecordUpdated) onRecordUpdated();
-      return;
-    }
-
-    const now = new Date();
-    const currentHHMM = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-    const performedTime = existing?.performed_time || currentHHMM;
-    const delayMins = calculateDelay(adhanTime, performedTime);
-
-    const newRec = {
-      date: selectedDate,
-      prayer_name: prayerId,
-      adhan_time: adhanTime,
-      performed_time: performedTime,
-      delay_minutes: delayMins,
-      status: newStatus,
-    };
-
-    const updated = upsertRecord(newRec);
-    setRecords([...updated]);
-    if (onRecordUpdated) onRecordUpdated();
-  };
-
-  // Automatic Real-Time Nafl Status Determination & Missed Locking System
-  const getAutoEvaluatedNaflStatus = (naflId) => {
-    const naflRec = dateNaflRecords.find((r) => r.nafl_id === naflId);
-    if (naflRec && naflRec.status === 'completed') {
-      return 'on_time';
-    }
-
-    const idx = NAFL_PRAYERS.findIndex((n) => n.id === naflId);
-    if (idx === -1) return 'missed';
-
-    if (!effectivePrayerTimes?.Fajr || !effectivePrayerTimes?.Sunrise || !effectivePrayerTimes?.Dhuhr || !effectivePrayerTimes?.Maghrib || !effectivePrayerTimes?.Isha) {
-      return 'unarrived';
-    }
-
-    const getNaflTimeMins = (nId) => {
-      const parseMins = (tStr) => {
-        if (!tStr || !tStr.includes(':')) return 0;
-        const [h, m] = tStr.split(':').map(Number);
-        return h * 60 + m;
-      };
-      const fajr = parseMins(effectivePrayerTimes.Fajr);
-      const sunrise = parseMins(effectivePrayerTimes.Sunrise);
-      const dhuhr = parseMins(effectivePrayerTimes.Dhuhr);
-      const maghrib = parseMins(effectivePrayerTimes.Maghrib);
-      const isha = parseMins(effectivePrayerTimes.Isha);
-      const lastThird = parseMins(nightTimes.lastThird);
-
-      switch (nId) {
-        case 'Sunnah_Fajr': return fajr;
-        case 'Duha': return sunrise + 15;
-        case 'Sunnah_Dhuhr_Pre': return dhuhr;
-        case 'Sunnah_Dhuhr_Post': return dhuhr + 15;
-        case 'Sunnah_Maghrib': return maghrib;
-        case 'Sunnah_Isha': return isha;
-        case 'Qiyam_Layl': return isha + 30;
-        case 'Witr': return lastThird < isha ? lastThird + 1440 : lastThird;
-        case 'Fajr_Next': return fajr + 1440;
-        default: return fajr;
-      }
-    };
-
-    let currentMins = safeNow.getHours() * 60 + safeNow.getMinutes();
-    const fajrMins = (effectivePrayerTimes.Fajr.split(':').map(Number)[0]) * 60 + (effectivePrayerTimes.Fajr.split(':').map(Number)[1]);
-
-    if (currentMins < fajrMins) {
-      currentMins += 1440;
-    }
-
-    const startMins = getNaflTimeMins(naflId);
-    const isToday = true;
-    if (isToday && currentMins < startMins) {
-      return 'unarrived';
-    }
-
-    const nextId = NAFL_PRAYERS[idx + 1]?.id || 'Fajr_Next';
-    const nextMins = getNaflTimeMins(nextId);
-    if (isToday && currentMins < nextMins) {
-      return 'late'; // Active window open!
-    }
-
-    return 'missed'; // Time window passed -> Truly Missed!
-  };
-
-  const handleToggleNafl = (naflId) => {
-    const status = getAutoEvaluatedNaflStatus(naflId);
-    if (status === 'unarrived') return;
-
-    if (status === 'missed') {
-      alert(lang === 'en' ? 'The time window for this Sunnah prayer has ended and it cannot be recorded according to commitment rules.' : 'انقضى وقت هذه السنة والنوافل وتعتبر متروكة ولا يمكن تسجيلها بعد انقضاء وقتها وفقاً لقواعد الالتزام.');
-      return;
-    }
-
-    const updated = toggleNaflRecord(selectedDate, naflId);
-    setNaflRecords([...updated]);
-  };
-
-  // Hero Date Formatting with Western Digits (1 2 3 4 5) in exact city timezone
-  const isEn = lang === 'en';
-  const is12Hour = (settings?.timeFormat || '12') === '12';
-
-  const liveClockTime = isEn
-    ? (new Date()).toLocaleTimeString('en-US', {
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: is12Hour,
-        ...tzOpt,
-      })
-    : toWesternDigits(
-        (new Date()).toLocaleTimeString('ar-EG-u-nu-latn', {
-          hour: '2-digit',
-          minute: '2-digit',
-          hour12: is12Hour,
-          ...tzOpt,
-        })
-      );
-
-  const gregorianDateFormatted = isEn
-    ? (new Date()).toLocaleDateString('en-US', {
-        weekday: 'long',
-        day: 'numeric',
-        month: 'long',
-        year: 'numeric',
-        ...tzOpt,
-      })
-    : toWesternDigits(
-        (new Date()).toLocaleDateString('ar-EG-u-nu-latn', {
-          weekday: 'long',
-          day: 'numeric',
-          month: 'long',
-          year: 'numeric',
-          ...tzOpt,
-        })
-      );
-
-  const hijriDateFormatted = isEn
-    ? `${(new Date()).toLocaleDateString('en-US-u-ca-islamic-umalqura', {
-        day: 'numeric',
-        month: 'long',
-        year: 'numeric',
-        ...tzOpt,
-      })} AH`
-    : `${toWesternDigits(
-        (new Date()).toLocaleDateString('ar-SA-u-ca-islamic-umalqura-nu-latn', {
-          day: 'numeric',
-          month: 'long',
-          year: 'numeric',
-          ...tzOpt,
-        })
-      )} هـ`;
 
   const prayerTimesStatus = getPrayerTimesStatus(effectivePrayerTimes);
   const isDataReady = prayerTimesStatus === DATA_STATUS.READY;
@@ -842,7 +666,7 @@ export default function PrayerTrackerView({ settings, onRecordUpdated, onNavigat
   }
 
   let nextOblDateObj = isDataReady && nextAdhanStr ? parsePrayerDateTime(nextAdhanStr, 0) : null;
-  if (nextOblDateObj && (currentOblIndex === oblList.length - 1 || nextOblDateObj <= safeNow)) {
+  if (nextOblDateObj && nextOblDateObj <= safeNow) {
     nextOblDateObj = parsePrayerDateTime(nextAdhanStr, 1);
   }
 
@@ -878,13 +702,13 @@ export default function PrayerTrackerView({ settings, onRecordUpdated, onNavigat
         handleMarkPerformed={handleMarkPerformed}
         onOpenModal={(pId) => setActiveModalPrayer(pId)}
         onQuickAutoDetect={handleQuickAutoDetectLocation}
-        isDetectingLocation={isDetectingLocationQuick}
+        isDetectingLocation={isDetectingLocationQuick || isLoadingPrayerTimes}
         onNavigateToSettings={onNavigateToSettings}
         t={t}
       />
 
       {/* Frosted Glass Sub-Window Modal for Obligatory Prayers */}
-      {activeModalPrayer && (
+      {typeof document !== 'undefined' && activeModalPrayer && ReactDOM.createPortal(
         <div className="prayer-modal-backdrop" onClick={() => setActiveModalPrayer(null)}>
           <div
             className="prayer-modal-card"
@@ -1063,14 +887,15 @@ export default function PrayerTrackerView({ settings, onRecordUpdated, onNavigat
                           justifyContent: 'center',
                           fontSize: '0.92rem',
                           fontWeight: '800',
-                          backgroundColor: isInvalidTime ? 'rgba(255, 255, 255, 0.1)' : 'var(--accent-blue)',
+                          backgroundColor: isInvalidTime ? 'rgba(255, 255, 255, 0.1)' : '#ffffff',
+                          color: isInvalidTime ? 'var(--text-muted)' : '#000000',
                           cursor: isInvalidTime ? 'not-allowed' : 'pointer',
                           opacity: isInvalidTime ? 0.6 : 1,
                         }}
                         onClick={() => {
                           if (isInvalidTime) return;
                           const delay = calculateDelay(adhanT, inputTime);
-                          const grace = settings.gracePeriodMinutes ?? 15;
+                          const grace = settings?.gracePeriodMinutes ?? 15;
                           const status = delay <= grace ? 'on_time' : 'late';
                           handleMarkPerformed(activeModalPrayer, inputTime, status);
                           setActiveModalPrayer(null);
@@ -1086,19 +911,17 @@ export default function PrayerTrackerView({ settings, onRecordUpdated, onNavigat
               );
             })()}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
-
-
-
       {/* Friday Sa'at al-Ijabah Hadith Modal */}
-      {showFridayHadithModal && (
+      {typeof document !== 'undefined' && showFridayHadithModal && ReactDOM.createPortal(
         <div
           style={{
             position: 'fixed',
             inset: 0,
-            zIndex: 3600,
+            zIndex: 10000,
             backgroundColor: 'rgba(0, 0, 0, 0.82)',
             backdropFilter: 'blur(20px)',
             WebkitBackdropFilter: 'blur(20px)',
@@ -1117,7 +940,7 @@ export default function PrayerTrackerView({ settings, onRecordUpdated, onNavigat
               maxWidth: '680px',
               width: '100%',
               padding: '36px 30px',
-              backgroundColor: 'rgba(18, 18, 24, 0.96)',
+              backgroundColor: 'rgba(18, 18, 18, 0.92)',
               border: '1px solid rgba(255, 255, 255, 0.2)',
               borderRadius: 'var(--radius-lg)',
               boxShadow: '0 30px 70px rgba(0, 0, 0, 0.9)',
@@ -1217,7 +1040,8 @@ export default function PrayerTrackerView({ settings, onRecordUpdated, onNavigat
               </div>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

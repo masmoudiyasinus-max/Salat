@@ -7,7 +7,8 @@ import {
   Navigation,
   Settings,
 } from 'lucide-react';
-import { toWesternDigits, formatTimeDisplay, getRecords, saveRecords } from '../services/storage';
+import { formatTimeDisplay, getRecords, saveRecords } from '../services/storage';
+import { DATA_STATUS } from '../services/dataReadiness';
 import LiveClock from './LiveClock';
 import LiveCountdown from './LiveCountdown';
 import LiveProgressBar from './LiveProgressBar';
@@ -44,25 +45,28 @@ export default function ActivePrayerHero({
   t,
 }) {
   const isEn = settings?.language === 'en';
+  const dataStatus = isDetectingLocation
+    ? DATA_STATUS.LOADING
+    : (isDataReady && activePrayerObj ? DATA_STATUS.READY : DATA_STATUS.UNAVAILABLE);
 
   return (
     <div
       className="bento-card active-prayer-hero-card"
       style={{
-        marginBottom: '24px',
-        padding: '32px 40px',
+        padding: '28px 36px',
         width: 'fit-content',
-        minWidth: 'min(92vw, 540px)',
-        maxWidth: '620px',
-        margin: '0 auto 24px auto',
-        background: 'rgba(10, 10, 14, 0.90)',
+        minWidth: 'min(92vw, 520px)',
+        maxWidth: '600px',
+        margin: '0 auto',
+        background: 'rgba(10, 10, 10, 0.88)',
         border: '1.5px solid rgba(255, 255, 255, 0.12)',
         borderRadius: 'var(--radius-lg)',
         boxShadow: '0 24px 60px rgba(0, 0, 0, 0.75), inset 0 0 0 1px rgba(255, 255, 255, 0.05)',
         position: 'relative',
+        transition: 'all 0.65s cubic-bezier(0.25, 1, 0.35, 1)',
       }}
     >
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', alignItems: 'center', textAlign: 'center' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '22px', alignItems: 'center', textAlign: 'center' }}>
         {/* 1. Reception Row: Clock, Hijri/Gregorian Date & Streak Flame in a Single Row */}
         <div
           style={{
@@ -92,46 +96,98 @@ export default function ActivePrayerHero({
         {/* Divider Line */}
         <div style={{ width: '100%', height: '1px', backgroundColor: 'var(--border-subtle)' }} />
 
-        {/* 2. Active Prayer Main Info (Centered) */}
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', gap: '12px', width: '100%' }}>
-          {isDataReady && activePrayerObj ? (
+        {/* 2. Active Prayer Main Info (Centered - Fit Height) */}
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', width: '100%', padding: '4px 0' }}>
+          {dataStatus === DATA_STATUS.READY ? (
             <>
-              <div style={{ fontSize: '0.85rem', fontWeight: '700', color: isActiveCompleted ? '#ffffff' : 'var(--text-secondary)', marginBottom: '2px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-                <span>{isActiveCompleted ? (isEn ? 'Current Prayer' : 'الصلاة الحالية') : (isEn ? 'Current Active Prayer' : 'الصلاة الحالية الآن')}</span>
-                {isActiveCompleted && (
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', color: 'var(--status-on-time)', fontSize: '0.8rem', fontWeight: '800' }}>
-                    <CheckCircle size={14} />
-                    <span>{isEn ? 'Prayed' : 'أُدِّيت'}</span>
-                  </span>
-                )}
-                <span style={{ fontSize: '0.78rem', padding: '2px 10px', borderRadius: 'var(--radius-pill)', backgroundColor: 'rgba(255, 255, 255, 0.08)', color: isActiveCompleted ? '#ffffff' : 'var(--text-muted)', border: '1px solid rgba(255, 255, 255, 0.12)' }}>
-                  {isEn ? 'Adhan' : 'أذان'} {formatTimeDisplay(activeAdhanStr, settings?.timeFormat)}
-                </span>
+              {/* Top Info (Collapsible Fit-Height on Hover) */}
+              <div className="hero-collapsible-wrapper hero-top-wrapper">
+                <div className="hero-collapsible-inner">
+                  <div
+                    className="hero-top-info"
+                    style={{
+                      fontSize: '0.85rem',
+                      fontWeight: '700',
+                      color: isActiveCompleted ? '#ffffff' : 'var(--text-secondary)',
+                      paddingBottom: '10px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '8px',
+                    }}
+                  >
+                    <span>{isActiveCompleted ? (isEn ? 'Current Prayer' : 'الصلاة الحالية') : (isEn ? 'Current Active Prayer' : 'الصلاة الحالية الآن')}</span>
+                    {isActiveCompleted && (
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', color: 'var(--status-on-time)', fontSize: '0.8rem', fontWeight: '800' }}>
+                        <CheckCircle size={14} />
+                        <span>{isEn ? 'Prayed' : 'أُدِّيت'}</span>
+                      </span>
+                    )}
+                    <span style={{ fontSize: '0.78rem', padding: '2px 10px', borderRadius: 'var(--radius-pill)', backgroundColor: 'rgba(255, 255, 255, 0.08)', color: isActiveCompleted ? '#ffffff' : 'var(--text-muted)', border: '1px solid rgba(255, 255, 255, 0.12)' }}>
+                      {isEn ? 'Adhan' : 'أذان'} {formatTimeDisplay(activeAdhanStr, settings?.timeFormat)}
+                    </span>
+                  </div>
+                </div>
               </div>
 
-              <h2 style={{ fontSize: 'clamp(2rem, 3.8vw, 2.8rem)', fontWeight: '900', color: isActiveCompleted ? '#ffffff' : 'var(--text-primary)', margin: 0, lineHeight: 1.1, letterSpacing: '-0.02em', textAlign: 'center' }}>
-                {isEn ? `${t(activeObligatoryId, activePrayerObj.nameAr)} Prayer` : `صلاة ${activePrayerObj.nameAr}`}
+              {/* Main Prayer Name */}
+              <h2
+                className="hero-prayer-title"
+                style={{
+                  fontSize: 'clamp(2.1rem, 3.8vw, 2.9rem)',
+                  fontWeight: '900',
+                  color: isActiveCompleted ? '#ffffff' : 'var(--text-primary)',
+                  margin: '4px 0',
+                  lineHeight: 1.2,
+                  letterSpacing: '-0.02em',
+                  textAlign: 'center',
+                }}
+              >
+                {isEn ? `${t(activeObligatoryId, activePrayerObj?.nameAr)} Prayer` : `صلاة ${activePrayerObj?.nameAr}`}
               </h2>
 
+              {/* Bottom Info (Collapsible Fit-Height on Hover) */}
               {nextPrayerObj && nextAdhanStr && (
-                <div style={{ marginTop: '8px', fontSize: '0.9rem', fontWeight: '600', color: isActiveCompleted ? '#ffffff' : 'var(--text-secondary)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', flexWrap: 'wrap', textAlign: 'center' }}>
-                  <span>{isEn ? `Next: ${t(nextOblId, nextPrayerObj?.nameAr)}` : `الصلاة القادمة: ${nextPrayerObj?.nameAr}`}</span>
-                  <span style={{ fontWeight: '800', color: isActiveCompleted ? '#ffffff' : 'var(--text-primary)' }}>
-                    {isEn ? 'Adhan' : 'أذان'} {formatTimeDisplay(nextAdhanStr, settings?.timeFormat)}
-                  </span>
-                  <LiveCountdown nextDateObj={nextOblDateObj} timezone={prayerTimes?.timezone} language={settings?.language} />
+                <div className="hero-collapsible-wrapper hero-bottom-wrapper">
+                  <div className="hero-collapsible-inner">
+                    <div
+                      className="hero-bottom-info"
+                      style={{
+                        paddingTop: '8px',
+                        fontSize: '0.9rem',
+                        fontWeight: '600',
+                        color: isActiveCompleted ? '#ffffff' : 'var(--text-secondary)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '8px',
+                        flexWrap: 'wrap',
+                        textAlign: 'center',
+                      }}
+                    >
+                      <span>{isEn ? `Next: ${t(nextOblId, nextPrayerObj?.nameAr)}` : `الصلاة القادمة: ${nextPrayerObj?.nameAr}`}</span>
+                      <span style={{ fontWeight: '800', color: isActiveCompleted ? '#ffffff' : 'var(--text-primary)' }}>
+                        {isEn ? 'Adhan' : 'أذان'} {formatTimeDisplay(nextAdhanStr, settings?.timeFormat)}
+                      </span>
+                      <LiveCountdown nextDateObj={nextOblDateObj} timezone={prayerTimes?.timezone} language={settings?.language} />
+                    </div>
+                  </div>
                 </div>
               )}
             </>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px', margin: '8px 0 0 0', textAlign: 'center' }}>
               <h2 style={{ fontSize: 'clamp(2rem, 3.8vw, 2.8rem)', fontWeight: '900', color: 'var(--text-primary)', margin: 0, lineHeight: 1.1, letterSpacing: '-0.02em', textAlign: 'center' }}>
-                {isEn ? 'Prayer Times Unavailable' : 'مواقيت الصلاة غير معروفة'}
+                {dataStatus === DATA_STATUS.LOADING
+                  ? (isEn ? 'Fetching Prayer Times from api.aladhan.com...' : 'جاري جلب مواقيت الصلاة عبر api.aladhan.com...')
+                  : (isEn ? 'Prayer Times Unavailable' : 'مواقيت الصلاة غير معروفة')}
               </h2>
               <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', margin: 0, textAlign: 'center' }}>
-                {isEn
-                  ? 'Please select your city in Settings or auto-detect your location to calculate prayer times.'
-                  : 'يرجى اختيار مدينتك في الإعدادات أو النقر على تحديد الموقع لبدء حساب مواقيت الصلاة بدقة.'}
+                {dataStatus === DATA_STATUS.LOADING
+                  ? (isEn ? 'Connecting to official Aladhan API to fetch exact timings for your city...' : 'يتم الآن جلب مواقيت الصلاة المعتمدة لمدينتك عبر واجهة Aladhan الرسمية (api.aladhan.com)...')
+                  : (isEn
+                    ? 'Please select your city in Settings or auto-detect your location to calculate prayer times.'
+                    : 'يرجى اختيار مدينتك في الإعدادات أو النقر على تحديد الموقع لبدء حساب مواقيت الصلاة بدقة.')}
               </p>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', flexWrap: 'wrap' }}>
                 <button
@@ -162,7 +218,7 @@ export default function ActivePrayerHero({
         </div>
 
         {/* Dynamic Progress Bar Separator - STRICTLY ONLY WHEN DATA IS READY */}
-        {isDataReady && currentOblDateObj && nextOblDateObj && (
+        {dataStatus === DATA_STATUS.READY && currentOblDateObj && nextOblDateObj && (
           <LiveProgressBar
             currentDateObj={currentOblDateObj}
             nextDateObj={nextOblDateObj}
@@ -217,7 +273,7 @@ export default function ActivePrayerHero({
                   BtnIcon = CheckCircle;
                   btnText = isEn ? 'Prayed on time' : 'أُدِّيت في الوقت';
                 } else if (isDoneLate) {
-                  btnBg = 'rgba(245, 158, 11, 0.16)';
+                  btnBg = 'rgba(255, 255, 255, 0.16)';
                   btnBorder = 'rgba(255, 255, 255, 0.22)';
                   btnColor = 'var(--status-late)';
                   BtnIcon = Clock;
@@ -229,7 +285,7 @@ export default function ActivePrayerHero({
                   BtnIcon = XCircle;
                   btnText = isEn ? `${t(activeObligatoryId, activePrayerObj.nameAr)} Missed` : `صلاة ${activePrayerObj.nameAr} متروكة`;
                 } else if (!isWithin15MinsOfAdhan) {
-                  btnBg = 'rgba(245, 158, 11, 0.12)';
+                  btnBg = 'rgba(255, 255, 255, 0.12)';
                   btnBorder = 'rgba(255, 255, 255, 0.16)';
                   btnColor = 'var(--status-late)';
                   BtnIcon = Clock;

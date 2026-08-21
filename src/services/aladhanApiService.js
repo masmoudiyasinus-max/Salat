@@ -3,39 +3,16 @@
  * High-performance, zero-key REST JSON engine for worldwide prayer timings & monthly calendars.
  */
 import { cleanTimeString, toWesternDigits } from './timeUtils.js';
-import { saveSourceScheduleCache, savePrayerTimesCache, getSourceScheduleCache } from './storage.js';
+import { saveSourceScheduleCache, getSourceScheduleCache, savePrayerTimesCache } from './storage.js';
 import { logError } from './errorLogger.js';
-import { resolveTimezoneForLocation } from './adhanCalculator.js';
+import { resolveTimezoneForLocation, ALADHAN_METHOD_MAP } from './adhanCalculator.js';
 
-// Mapping internal calculation authority IDs to Aladhan API numerical method IDs
-export const ALADHAN_METHOD_MAP = {
-  mwl: 3,
-  isna: 2,
-  egypt: 5,
-  makkah: 4,
-  karachi: 1,
-  tehran: 7,
-  gulf: 8,
-  kuwait: 9,
-  qatar: 10,
-  singapore: 11,
-  france: 12,
-  turkey: 13,
-  russia: 14,
-  moonsighting: 15,
-  dubai: 16,
-  jakim: 17,
-  tunisia: 18,
-  algeria: 19,
-  indonesia: 20,
-  morocco: 21,
-  auto: 5, // Default fallback
-};
+export { ALADHAN_METHOD_MAP };
 
 /**
  * Normalizes a timing string by stripping timezone suffixes (e.g. "04:07 (CET)" -> "04:07").
  */
-function cleanAladhanTime(raw) {
+export function cleanAladhanTime(raw) {
   if (!raw || typeof raw !== 'string') return '';
   const timeOnly = raw.split(' ')[0].trim();
   return cleanTimeString(timeOnly);
@@ -44,7 +21,7 @@ function cleanAladhanTime(raw) {
 /**
  * Formats day date from Aladhan response to ISO YYYY-MM-DD string.
  */
-function formatAladhanDateToISO(dateObj) {
+export function formatAladhanDateToISO(dateObj) {
   if (dateObj?.gregorian?.date) {
     // DD-MM-YYYY -> YYYY-MM-DD
     const parts = dateObj.gregorian.date.split('-');
@@ -56,6 +33,133 @@ function formatAladhanDateToISO(dateObj) {
 }
 
 /**
+ * Fetches single-day prayer times for a city and country from Aladhan REST API.
+ */
+export async function fetchAladhanPrayerTimesForLocation(city, country, targetDateStr = '') {
+  if (!city || typeof city !== 'string') {
+    return { success: false, error: 'invalid_city' };
+  }
+
+  const now = new Date();
+  const dateFormatted = targetDateStr || `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+
+  // 1. Check local source schedule cache first
+  try {
+    const cached = getSourceScheduleCache();
+    if (
+      cached &&
+      cached.schedule &&
+      cached.schedule[dateFormatted] &&
+      (cached.city || '').toLowerCase() === city.toLowerCase() &&
+      (cached.country || '').toLowerCase() === (country || '').toLowerCase()
+    ) {
+      const times = cached.schedule[dateFormatted];
+      return {
+        success: true,
+        times,
+        timezone: cached.timezone || resolveTimezoneForLocation(city, country),
+        source: 'جدول مواقيت Aladhan المحفوظ محلياً',
+        city,
+        country,
+      };
+    }
+  } catch (err) {
+    console.warn('Cache lookup warning:', err);
+  }
+
+  // 2. Fetch directly from Aladhan API
+  try {
+    const url = `https://api.aladhan.com/v1/timingsByCity?city=${encodeURIComponent(city.trim())}&country=${encodeURIComponent((country || '').trim())}`;
+    const res = await fetch(url);
+    if (!res.ok) {
+      return { success: false, error: `http_${res.status}` };
+    }
+
+    const json = await res.json();
+    if (json.code !== 200 || !json.data || !json.data.timings) {
+      return { success: false, error: 'invalid_response' };
+    }
+
+    const timings = json.data.timings;
+    const tz = json.data.meta?.timezone || resolveTimezoneForLocation(city, country);
+    const times = {
+      Fajr: cleanAladhanTime(timings.Fajr),
+      Sunrise: cleanAladhanTime(timings.Sunrise),
+      Dhuhr: cleanAladhanTime(timings.Dhuhr),
+      Asr: cleanAladhanTime(timings.Asr),
+      Maghrib: cleanAladhanTime(timings.Maghrib),
+      Isha: cleanAladhanTime(timings.Isha),
+      Midnight: cleanAladhanTime(timings.Midnight || ''),
+      Lastthird: cleanAladhanTime(timings.Lastthird || ''),
+    };
+
+    // Trigger background monthly sync for 60-day offline resilience
+    syncFullMonthFromAladhanApi(city, country).catch(() => {});
+
+    return {
+      success: true,
+      times,
+      timezone: tz,
+      city,
+      country,
+      hijriDate: json.data.date?.hijri,
+      source: 'Aladhan REST API (api.aladhan.com)',
+    };
+  } catch (err) {
+    console.error('Failed to fetch from Aladhan API:', err);
+    logError(err, 'AladhanAPI.SingleDay');
+    return { success: false, error: err.message };
+  }
+}
+
+/**
+ * Fetches single-day prayer times by precise GPS coordinates from Aladhan REST API.
+ */
+export async function fetchAladhanPrayerTimesByCoordinates(latitude, longitude, _targetDateStr = '') {
+  const lat = Number(latitude);
+  const lng = Number(longitude);
+  if (isNaN(lat) || isNaN(lng)) return { success: false, error: 'invalid_coordinates' };
+
+  try {
+    const url = `https://api.aladhan.com/v1/timings?latitude=${lat}&longitude=${lng}`;
+    const res = await fetch(url);
+    if (!res.ok) {
+      return { success: false, error: `http_${res.status}` };
+    }
+
+    const json = await res.json();
+    if (json.code !== 200 || !json.data || !json.data.timings) {
+      return { success: false, error: 'invalid_response' };
+    }
+
+    const timings = json.data.timings;
+    const tz = json.data.meta?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const times = {
+      Fajr: cleanAladhanTime(timings.Fajr),
+      Sunrise: cleanAladhanTime(timings.Sunrise),
+      Dhuhr: cleanAladhanTime(timings.Dhuhr),
+      Asr: cleanAladhanTime(timings.Asr),
+      Maghrib: cleanAladhanTime(timings.Maghrib),
+      Isha: cleanAladhanTime(timings.Isha),
+      Midnight: cleanAladhanTime(timings.Midnight || ''),
+      Lastthird: cleanAladhanTime(timings.Lastthird || ''),
+    };
+
+    return {
+      success: true,
+      times,
+      timezone: tz,
+      hijriDate: json.data.date?.hijri,
+      source: 'Aladhan REST API عبر GPS (api.aladhan.com)',
+    };
+  } catch (err) {
+    console.error('Failed to fetch from Aladhan API by coords:', err);
+    logError(err, 'AladhanAPI.Coords');
+    return { success: false, error: err.message };
+  }
+}
+
+/**
  * Fetches a full monthly calendar for a city & country from api.aladhan.com.
  */
 export async function fetchAladhanMonthlyCalendar(city, country, methodKey = 'auto', month = null, year = null) {
@@ -64,7 +168,9 @@ export async function fetchAladhanMonthlyCalendar(city, country, methodKey = 'au
   const now = new Date();
   const targetMonth = month || now.getMonth() + 1;
   const targetYear = year || now.getFullYear();
-  const methodNum = ALADHAN_METHOD_MAP[methodKey] || ALADHAN_METHOD_MAP.auto;
+  const methodNum = ALADHAN_METHOD_MAP[methodKey] !== undefined
+    ? ALADHAN_METHOD_MAP[methodKey]
+    : (Number.isInteger(Number(methodKey)) && Number(methodKey) >= 0 ? Number(methodKey) : ALADHAN_METHOD_MAP.auto);
 
   const url = `https://api.aladhan.com/v1/calendarByCity?city=${encodeURIComponent(city.trim())}&country=${encodeURIComponent((country || '').trim())}&method=${methodNum}&month=${targetMonth}&year=${targetYear}`;
 
@@ -109,6 +215,8 @@ export async function fetchAladhanMonthlyCalendar(city, country, methodKey = 'au
     });
 
     const totalDays = Object.keys(schedule).length;
+    const tz = json.data[0]?.meta?.timezone || resolveTimezoneForLocation(city, country);
+
     return {
       success: true,
       schedule,
@@ -117,6 +225,7 @@ export async function fetchAladhanMonthlyCalendar(city, country, methodKey = 'au
       hijriToday,
       city,
       country,
+      timezone: tz,
       source: 'Aladhan REST API (api.aladhan.com)',
     };
   } catch (err) {
@@ -130,6 +239,7 @@ export async function fetchAladhanMonthlyCalendar(city, country, methodKey = 'au
  * Synchronizes and stores the current month & next month from Aladhan API directly into local storage.
  */
 export async function syncFullMonthFromAladhanApi(city, country, methodKey = 'auto') {
+  if (!city) return { success: false, error: 'no_city' };
   const now = new Date();
   const currentMonth = now.getMonth() + 1;
   const currentYear = now.getFullYear();
@@ -141,6 +251,7 @@ export async function syncFullMonthFromAladhanApi(city, country, methodKey = 'au
   }
 
   let combinedSchedule = { ...currentMonthRes.schedule };
+  const cityTimezone = currentMonthRes.timezone || resolveTimezoneForLocation(city, country);
 
   // 2. Fetch Next Month (for 60 days total coverage)
   try {
@@ -155,7 +266,6 @@ export async function syncFullMonthFromAladhanApi(city, country, methodKey = 'au
   }
 
   const totalDays = Object.keys(combinedSchedule).length;
-  const domain = 'api.aladhan.com';
 
   // 3. Save multi-day schedule into localStorage for 100% offline support
   saveSourceScheduleCache({
@@ -164,12 +274,18 @@ export async function syncFullMonthFromAladhanApi(city, country, methodKey = 'au
     lastFetched: new Date().toISOString(),
     totalDays,
     schedule: combinedSchedule,
+    city: (city || '').trim(),
+    country: (country || '').trim(),
+    timezone: cityTimezone,
+    method: methodKey,
+    year: currentYear,
+    month: currentMonth,
+    cacheKey: `${(city || '').trim().toLowerCase()}_${(country || '').trim().toLowerCase()}_${currentYear}_${currentMonth}_${methodKey}`,
   });
 
   // 4. Immediately overwrite active prayer times cache with today's times
   const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   const todayTimes = combinedSchedule[todayStr] || Object.values(combinedSchedule)[0];
-  const cityTimezone = currentMonthRes.timezone || resolveTimezoneForLocation(city, country);
 
   if (todayTimes) {
     const hh = String(now.getHours()).padStart(2, '0');
@@ -178,6 +294,8 @@ export async function syncFullMonthFromAladhanApi(city, country, methodKey = 'au
 
     const mergedTimes = {
       ...todayTimes,
+      city: (city || '').trim(),
+      country: (country || '').trim(),
       timezone: cityTimezone,
       lastSyncedDate: todayStr,
       lastSyncedTime: timeNow,

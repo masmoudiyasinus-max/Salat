@@ -15,6 +15,7 @@ export default function LiveClock({ timezone, city, country, timeFormat = '12', 
         setNow(new Date());
       }
     };
+    update();
     const timer = setInterval(update, 1000);
     const handleVis = () => {
       if (!document.hidden) update();
@@ -24,61 +25,111 @@ export default function LiveClock({ timezone, city, country, timeFormat = '12', 
       clearInterval(timer);
       document.removeEventListener('visibilitychange', handleVis);
     };
-  }, []);
+  }, [effectiveTz]);
 
   const isEn = language === 'en';
   const is12Hour = (timeFormat || '12') === '12';
-  const tzOpt = effectiveTz ? { timeZone: effectiveTz } : {};
+  const tzOpt = (effectiveTz && typeof effectiveTz === 'string' && effectiveTz.includes('/')) ? { timeZone: effectiveTz } : {};
 
-  const liveClockTime = isEn
-    ? now.toLocaleTimeString('en-US', {
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: is12Hour,
-        ...tzOpt,
-      })
-    : toWesternDigits(
-        now.toLocaleTimeString('ar-EG-u-nu-latn', {
+  let liveClockTime = '';
+  try {
+    liveClockTime = isEn
+      ? now.toLocaleTimeString('en-US', {
           hour: '2-digit',
           minute: '2-digit',
           hour12: is12Hour,
           ...tzOpt,
         })
-      );
+      : toWesternDigits(
+          now.toLocaleTimeString('ar-EG-u-nu-latn', {
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: is12Hour,
+            ...tzOpt,
+          })
+        );
+  } catch {
+    liveClockTime = now.toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: is12Hour,
+    });
+  }
 
-  const gregorianDateFormatted = isEn
-    ? now.toLocaleDateString('en-US', {
-        weekday: 'long',
-        day: 'numeric',
-        month: 'long',
-        year: 'numeric',
-        ...tzOpt,
-      })
-    : toWesternDigits(
-        now.toLocaleDateString('ar-EG-u-nu-latn', {
+  let gregorianDateFormatted = '';
+  try {
+    gregorianDateFormatted = isEn
+      ? now.toLocaleDateString('en-US', {
           weekday: 'long',
           day: 'numeric',
           month: 'long',
           year: 'numeric',
           ...tzOpt,
         })
-      );
+      : toWesternDigits(
+          now.toLocaleDateString('ar-EG-u-nu-latn', {
+            weekday: 'long',
+            day: 'numeric',
+            month: 'long',
+            year: 'numeric',
+            ...tzOpt,
+          })
+        );
+  } catch {
+    gregorianDateFormatted = now.toLocaleDateString('en-US', {
+      weekday: 'long',
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+    });
+  }
 
-  const hijriDateFormatted = isEn
-    ? `${now.toLocaleDateString('en-US-u-ca-islamic-umalqura', {
+  let hijriDateFormatted = '';
+  try {
+    if (isEn) {
+      const rawEn = now.toLocaleDateString('en-US-u-ca-islamic-umalqura', {
         day: 'numeric',
         month: 'long',
         year: 'numeric',
         ...tzOpt,
-      })} AH`
-    : `${toWesternDigits(
+      }).trim();
+      hijriDateFormatted = rawEn.endsWith('AH') ? rawEn : `${rawEn} AH`;
+    } else {
+      const rawAr = toWesternDigits(
         now.toLocaleDateString('ar-SA-u-ca-islamic-umalqura-nu-latn', {
           day: 'numeric',
           month: 'long',
           year: 'numeric',
           ...tzOpt,
         })
-      )} هـ`;
+      ).trim();
+      hijriDateFormatted = rawAr.endsWith('هـ') ? rawAr : `${rawAr} هـ`;
+    }
+  } catch {
+    try {
+      if (isEn) {
+        const rawEn = now.toLocaleDateString('en-US-u-ca-islamic', {
+          day: 'numeric',
+          month: 'long',
+          year: 'numeric',
+          ...tzOpt,
+        }).trim();
+        hijriDateFormatted = rawEn.endsWith('AH') ? rawEn : `${rawEn} AH`;
+      } else {
+        const rawAr = toWesternDigits(
+          now.toLocaleDateString('ar-SA', {
+            day: 'numeric',
+            month: 'long',
+            year: 'numeric',
+            ...tzOpt,
+          })
+        ).trim();
+        hijriDateFormatted = rawAr.endsWith('هـ') ? rawAr : `${rawAr} هـ`;
+      }
+    } catch {
+      hijriDateFormatted = '';
+    }
+  }
 
   return (
     <div style={{ display: 'inline-flex', alignItems: 'center', gap: '16px', flexWrap: 'nowrap', whiteSpace: 'nowrap' }}>

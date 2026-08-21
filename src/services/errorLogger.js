@@ -20,7 +20,7 @@ export function normalizeStackTrace(stack) {
       line
         .replace(/(\?t=\d+|\?v=[a-f0-9]+)/gi, '')
         .replace(/:\d+:\d+/g, '')
-        .replace(/at http:\/\/[^\/]+/g, 'at app://')
+        .replace(/at http:\/\/[^/]+/g, 'at app://')
         .trim()
     )
     .filter(Boolean)
@@ -67,7 +67,7 @@ export function getStoredLogs() {
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
-  } catch (e) {
+  } catch {
     return [];
   }
 }
@@ -86,7 +86,7 @@ export function saveStoredLogs(logs) {
       const emergencyTrim = (logs || []).slice(0, 30);
       localStorage.setItem(KEYS.ERROR_LOGS, JSON.stringify(emergencyTrim));
       return true;
-    } catch (e2) {
+    } catch {
       return false;
     }
   }
@@ -121,7 +121,7 @@ export function logError(error, contextInfo = 'Global') {
     const stackStr = error?.stack || (error?.componentStack ? `Component Stack:\n${error.componentStack}` : '');
 
     const metadata = {
-      url: typeof window !== 'undefined' ? window.location.href : '',
+      url: typeof window !== 'undefined' && window.location ? window.location.href : '',
       userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : '',
       language: typeof navigator !== 'undefined' ? navigator.language : 'ar',
       screen: typeof window !== 'undefined' && window.screen ? `${window.screen.width}x${window.screen.height}` : '',

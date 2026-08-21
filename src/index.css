@@ -32,6 +32,38 @@
   }
 }
 
+@keyframes fadeIn {
+  0% {
+    opacity: 0;
+    transform: translateZ(0);
+  }
+  100% {
+    opacity: 1;
+    transform: translateZ(0);
+  }
+}
+
+@keyframes slideUp {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 16px, 0);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+.fade-in {
+  animation: fadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  will-change: opacity, transform;
+}
+
+.slide-up {
+  animation: slideUp 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  will-change: opacity, transform;
+}
+
 @keyframes slideDown {
   from {
     opacity: 0;
@@ -76,26 +108,26 @@
    ========================================================================== */
 
 :root {
-  --bg-primary: rgba(0, 0, 0, 0.70);
-  --bg-secondary: rgba(0, 0, 0, 0.60);
-  --bg-card: rgba(0, 0, 0, 0.60);
-  --bg-card-hover: rgba(0, 0, 0, 0.72);
-  --bg-elevated: rgba(0, 0, 0, 0.80);
+  --bg-primary: rgba(10, 10, 10, 0.92);
+  --bg-secondary: rgba(10, 10, 10, 0.88);
+  --bg-card: rgba(10, 10, 10, 0.88);
+  --bg-card-hover: rgba(10, 10, 10, 0.94);
+  --bg-elevated: rgba(10, 10, 10, 0.96);
 
   --border-subtle: rgba(255, 255, 255, 0.12);
   --border-focus: rgba(255, 255, 255, 0.28);
   --border-strong: rgba(255, 255, 255, 0.35);
 
-  --text-primary: #f3f4f6;
-  --text-secondary: #9ca3af;
-  --text-muted: #6b7280;
+  --text-primary: #f5f5f5;
+  --text-secondary: #a3a3a3;
+  --text-muted: #737373;
 
   /* Status Solid Colors (No Gradients) */
   --status-on-time: #ffffff;
   --status-on-time-bg: rgba(255, 255, 255, 0.12);
   
-  --status-late: #f59e0b;
-  --status-late-bg: rgba(245, 158, 11, 0.12);
+  --status-late: #ffffff;
+  --status-late-bg: rgba(255, 255, 255, 0.12);
 
   --status-qada: #ef4444;
   --status-qada-bg: rgba(239, 68, 68, 0.12);
@@ -103,8 +135,8 @@
   --status-missed: #ef4444;
   --status-missed-bg: rgba(239, 68, 68, 0.15);
 
-  --accent-blue: #3b82f6;
-  --accent-blue-bg: rgba(59, 130, 246, 0.12);
+  --accent-blue: #ffffff;
+  --accent-blue-bg: rgba(255, 255, 255, 0.12);
 
   --shadow-sm: 0 4px 12px rgba(0, 0, 0, 0.10);
   --shadow-md: 0 10px 30px rgba(0, 0, 0, 0.20);
@@ -123,12 +155,17 @@
   margin: 0;
   padding: 0;
   font-family: inherit;
+  scrollbar-width: none !important;
+  -ms-overflow-style: none !important;
 }
 
 html {
   font-size: 21px;
-  background-color: #08090d;
+  background-color: #080808;
   font-family: var(--font-main);
+  overflow-x: hidden;
+  scrollbar-width: none !important;
+  -ms-overflow-style: none !important;
 }
 
 body {
@@ -140,6 +177,9 @@ body {
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
   line-height: 1.6;
+  overflow-x: hidden;
+  scrollbar-width: none !important;
+  -ms-overflow-style: none !important;
 }
 
 html[dir="ltr"],
@@ -214,7 +254,7 @@ html[dir="rtl"] button {
   position: fixed;
   inset: 0;
   z-index: -5;
-  background-color: #07080b;
+  background-color: #080808;
   pointer-events: none;
 }
 
@@ -224,7 +264,7 @@ html[dir="rtl"] button {
   inset: 0;
   z-index: -3;
   pointer-events: none;
-  background-color: #07080b;
+  background-color: #080808;
   opacity: 0;
   /* Smooth 0.85s Fade-Out curve when revealing the new background */
   transition: opacity 0.85s cubic-bezier(0.16, 1, 0.3, 1);
@@ -254,28 +294,20 @@ html[dir="rtl"] button {
   -webkit-transform: translateZ(0);
 }
 
-/* Tab Navigation View Smooth Enter Animation (Gentle Modern Frosted Entrance) */
-@keyframes viewFadeIn {
-  0% {
-    opacity: 0;
-    transform: translate3d(0, 10px, 0) scale(0.995);
-    filter: blur(4px);
-  }
-  100% {
-    opacity: 1;
-    transform: translate3d(0, 0, 0) scale(1);
-    filter: blur(0px);
-  }
-}
-
-.view-transition-wrapper {
+.view-pane {
   width: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
-  animation: viewFadeIn 0.32s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-  will-change: opacity, transform, filter;
-  transform-origin: top center;
+  justify-content: center;
+}
+
+.view-pane.active {
+  display: flex !important;
+}
+
+.view-pane.hidden {
+  display: none !important;
 }
 
 /* Tactile Modern Keyboard Keycap Styling */
@@ -312,14 +344,16 @@ html[dir="rtl"] button {
 .app-container {
   max-width: 1280px;
   min-height: 100vh;
+  min-height: 100dvh;
   margin: 0 auto;
-  padding: 20px 16px !important;
+  padding: 16px !important;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   box-sizing: border-box;
   width: 100%;
+  overflow-x: hidden;
 }
 
 main {
@@ -329,12 +363,9 @@ main {
   align-items: center;
   justify-content: center;
   flex: 1;
-}
-
-.dashboard-view {
-  width: 100%;
-  max-width: 1100px;
-  margin: 0 auto;
+  transform: translateY(var(--muneer-toast-offset, 0px)) translateZ(0);
+  transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: transform;
 }
 
 /* Header Navbar */
@@ -348,7 +379,7 @@ main {
   width: min(95%, 1280px) !important;
   height: 64px !important;
   z-index: 1000 !important;
-  background: rgba(10, 10, 12, 0.40) !important;
+  background: rgba(10, 10, 10, 0.88) !important;
   backdrop-filter: blur(20px) !important;
   -webkit-backdrop-filter: blur(20px) !important;
   border: none !important;
@@ -422,7 +453,7 @@ main {
   flex-direction: column !important;
   align-items: stretch !important;
   gap: 8px !important;
-  background: rgba(10, 10, 12, 0.65) !important;
+  background: rgba(10, 10, 10, 0.88) !important;
   backdrop-filter: blur(20px) !important;
   -webkit-backdrop-filter: blur(20px) !important;
   padding: 8px !important;
@@ -432,6 +463,49 @@ main {
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5), inset 0 0 0 1px rgba(255, 255, 255, 0.1) !important;
   z-index: 1100 !important;
   box-sizing: border-box !important;
+}
+
+.nav-divider {
+  width: 100%;
+  height: 1px;
+  background-color: rgba(255, 255, 255, 0.15);
+  margin: 4px 0;
+  flex-shrink: 0;
+}
+
+@media (max-width: 820px) {
+  .nav-tabs {
+    left: 50% !important;
+    bottom: 16px !important;
+    top: auto !important;
+    transform: translateX(-50%) !important;
+    -webkit-transform: translateX(-50%) !important;
+    flex-direction: row-reverse !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 8px !important;
+    padding: 6px 14px !important;
+    width: max-content !important;
+    max-width: calc(100vw - 32px) !important;
+    border-radius: var(--radius-pill) !important;
+  }
+
+  .nav-divider {
+    width: 1px !important;
+    height: 22px !important;
+    margin: 0 4px !important;
+  }
+
+  .app-container {
+    padding-bottom: 84px !important;
+  }
+
+  .hero-collapsible-wrapper {
+    grid-template-rows: 1fr !important;
+    opacity: 1 !important;
+    transform: none !important;
+    pointer-events: auto !important;
+  }
 }
 
 .nav-btn {
@@ -524,7 +598,7 @@ main {
 
 .badge-indicator.missing {
   color: var(--status-late);
-  border-color: rgba(245, 158, 11, 0.3);
+  border-color: rgba(255, 255, 255, 0.3);
 }
 
 .pulse-dot {
@@ -539,27 +613,85 @@ main {
 .bento-card,
 .stat-card,
 .chat-sidebar,
-.chat-main,
 .prayer-modal-card,
 .prayer-circles-container,
 .active-prayer-hero-card,
 .custom-select-trigger,
 .custom-select-menu {
-  background: rgba(10, 10, 14, 0.90) !important;
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
-  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  background: rgba(10, 10, 10, 0.88) !important;
+  backdrop-filter: blur(20px) !important;
+  -webkit-backdrop-filter: blur(20px) !important;
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6) !important;
 }
 
 .bento-card {
   border-radius: var(--radius-lg);
   padding: 24px;
-  box-shadow: var(--shadow-md);
-  transition: border-color 0.2s ease, transform 0.2s ease;
 }
 
 .bento-card:hover {
   border-color: var(--border-focus);
+}
+
+/* Active Prayer Hero: Fit Height & Smooth Grid Collapsible Hover Reveal */
+.hero-collapsible-wrapper {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transform: scale(0.97);
+  transition: grid-template-rows 0.65s cubic-bezier(0.25, 1, 0.35, 1),
+              opacity 0.55s ease,
+              transform 0.55s cubic-bezier(0.25, 1, 0.35, 1);
+  pointer-events: none;
+  width: 100%;
+}
+
+.hero-collapsible-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.active-prayer-hero-card:hover .hero-collapsible-wrapper,
+.active-prayer-hero-card:focus-within .hero-collapsible-wrapper {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transform: scale(1);
+  pointer-events: auto;
+}
+
+/* Cohesive Solid Dark Glassmorphism for Inner Sub-Cards, Metric Boxes & Tiles */
+.sub-glass-card,
+.sub-card,
+.metric-box,
+.option-tile {
+  background: rgba(18, 18, 18, 0.75);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  transition: all 0.2s ease;
+}
+
+.sub-glass-card:hover,
+.sub-card:hover,
+.metric-box:hover,
+.option-tile:hover {
+  border-color: rgba(255, 255, 255, 0.3);
+  background: rgba(26, 26, 26, 0.85);
+}
+
+.option-tile.active,
+.option-tile-active {
+  background: rgba(255, 255, 255, 0.22) !important;
+  border: 2px solid #ffffff !important;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.45), 0 8px 24px rgba(0, 0, 0, 0.55) !important;
+}
+
+.option-tile.active svg,
+.option-tile-active svg {
+  color: #ffffff !important;
+  filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.5));
 }
 
 /* Typography & Titles with High Contrast Soft Black Text Shadows for Unframed Texts */
@@ -580,7 +712,7 @@ main {
 
 .section-subtitle {
   font-size: 0.9rem;
-  color: #f3f4f6;
+  color: #f5f5f5;
   margin-top: 4px;
   text-shadow: 0 2px 8px rgba(0, 0, 0, 0.95), 0 1px 3px rgba(0, 0, 0, 1) !important;
 }
@@ -602,7 +734,58 @@ main {
   text-shadow: 0 2px 10px rgba(0, 0, 0, 0.92), 0 1px 4px rgba(0, 0, 0, 0.98) !important;
 }
 
-/* Buttons */
+/* Buttons & Interactive Elements */
+button,
+[role="button"],
+.btn-primary,
+.btn-secondary,
+.nav-btn,
+.option-tile,
+.filter-pill-btn,
+.circle-prayer-item {
+  outline: none !important;
+  -webkit-tap-highlight-color: transparent !important;
+  -webkit-touch-callout: none !important;
+  user-select: none !important;
+  -webkit-user-select: none !important;
+}
+
+button:focus,
+button:focus-visible,
+button:active,
+[role="button"]:focus,
+[role="button"]:focus-visible,
+[role="button"]:active,
+.btn-primary:focus,
+.btn-primary:focus-visible,
+.btn-primary:active,
+.btn-secondary:focus,
+.btn-secondary:focus-visible,
+.btn-secondary:active,
+.nav-btn:focus,
+.nav-btn:focus-visible,
+.nav-btn:active,
+.option-tile:focus,
+.option-tile:focus-visible,
+.option-tile:active,
+.filter-pill-btn:focus,
+.filter-pill-btn:focus-visible,
+.filter-pill-btn:active,
+.circle-prayer-item:focus,
+.circle-prayer-item:focus-visible,
+.circle-prayer-item:active {
+  outline: none !important;
+  outline-color: transparent !important;
+  outline-style: none !important;
+  outline-width: 0 !important;
+  -webkit-tap-highlight-color: transparent !important;
+}
+
+button::-moz-focus-inner {
+  border: 0 !important;
+  outline: none !important;
+}
+
 .btn-primary {
   display: inline-flex;
   align-items: center;
@@ -719,7 +902,7 @@ button > span,
 }
 
 .form-input:focus, .form-select:focus {
-  border-color: var(--accent-blue);
+  border-color: #ffffff;
   box-shadow: var(--shadow-sm);
 }
 
@@ -835,7 +1018,7 @@ button > span,
 }
 
 .prayer-card.is-current {
-  border-color: var(--accent-blue);
+  border-color: #ffffff;
   background-color: var(--bg-card);
 }
 
@@ -892,7 +1075,7 @@ button > span,
   width: 14px;
   height: 14px;
   border-radius: 3px;
-  background-color: #1a1d2b;
+  background-color: #141414;
   border: 1px solid rgba(255, 255, 255, 0.04);
   cursor: pointer;
   position: relative;
@@ -906,12 +1089,12 @@ button > span,
 }
 
 /* Solid Heatmap Colors (Zero Gradients) */
-.heatmap-cell.level-0 { background-color: #ffffff; } /* 0 issues: Perfect */
-.heatmap-cell.level-1 { background-color: #84cc16; } /* 1 issue */
-.heatmap-cell.level-2 { background-color: #f59e0b; } /* 2 issues */
-.heatmap-cell.level-3 { background-color: #f97316; } /* 3 issues */
-.heatmap-cell.level-4 { background-color: #ef4444; } /* 4+ issues */
-.heatmap-cell.level-empty { background-color: #1a1d2b; }
+.heatmap-cell.level-0 { background-color: #ffffff; } /* 0 issues: Perfect White */
+.heatmap-cell.level-1 { background-color: #e5e5e5; } /* 1 minor delay */
+.heatmap-cell.level-2 { background-color: #d4d4d4; } /* 2 delays */
+.heatmap-cell.level-3 { background-color: #a3a3a3; } /* 3 delays */
+.heatmap-cell.level-4 { background-color: #ef4444; } /* 4+ missed issues: Red */
+.heatmap-cell.level-empty { background-color: rgba(255, 255, 255, 0.05); }
 
 /* Chat Layout */
 .chat-view {
@@ -922,7 +1105,6 @@ button > span,
   flex-direction: column;
   justify-content: center;
   align-items: center;
-  min-height: calc(100vh - 40px);
 }
 
 .chat-layout {
@@ -945,15 +1127,15 @@ button > span,
 }
 
 .chat-main {
-  background: var(--bg-secondary);
+  background: rgba(10, 10, 10, 0.88);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
-  border: 1px solid var(--border-subtle);
+  border: none;
   border-radius: var(--radius-lg);
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  box-shadow: var(--shadow-md);
+  box-shadow: none;
   width: 100%;
 }
 
@@ -963,7 +1145,7 @@ button > span,
 }
 
 .chat-main.active-mode {
-  height: min(680px, calc(100vh - 100px));
+  height: min(680px, calc(100dvh - 80px));
 }
 
 .chat-messages {
@@ -1006,6 +1188,12 @@ html[dir="rtl"] .message-bubble.user {
   border-bottom-right-radius: 4px;
 }
 
+.message-bubble.user.is-pending {
+  border: 1px dashed rgba(255, 255, 255, 0.35) !important;
+  background-color: rgba(255, 255, 255, 0.05) !important;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+}
+
 .message-bubble.assistant {
   align-self: stretch;
   width: 100%;
@@ -1017,20 +1205,6 @@ html[dir="rtl"] .message-bubble.user {
   border-radius: 0 !important;
   box-shadow: none !important;
   color: var(--text-primary);
-  animation: assistantBubbleEnter 0.38s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-  will-change: opacity, transform;
-  transform: translateZ(0);
-}
-
-@keyframes assistantBubbleEnter {
-  0% {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-  100% {
-    opacity: 1;
-    transform: translateY(0);
-  }
 }
 
 /* Three Animated Dots Typing Indicator Pill (Unclipped Pure GPU Smoothness) */
@@ -1045,15 +1219,15 @@ html[dir="rtl"] .message-bubble.user {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  width: 58px;
-  height: 32px;
-  padding: 0 14px;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 9999px;
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  width: auto;
+  height: auto;
+  padding: 6px 4px;
+  background: transparent !important;
+  border: none !important;
+  border-radius: 0;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  box-shadow: none !important;
   animation: typingPillEnterSmooth 0.45s cubic-bezier(0.16, 1, 0.3, 1) forwards;
   will-change: transform, opacity;
   transform: translateZ(0);
@@ -1088,7 +1262,7 @@ html[dir="rtl"] .message-bubble.user {
 .typing-dot {
   width: 6px;
   height: 6px;
-  background-color: #9ca3af;
+  background-color: #a3a3a3;
   border-radius: 50%;
   animation: typingDotWave 1.4s infinite ease-in-out both;
   will-change: transform, opacity, background-color;
@@ -1111,7 +1285,7 @@ html[dir="rtl"] .message-bubble.user {
   0%, 70%, 100% {
     transform: translateY(0) scale(0.8) translateZ(0);
     opacity: 0.4;
-    background-color: #9ca3af;
+    background-color: #a3a3a3;
   }
   35% {
     transform: translateY(-3.5px) scale(1.15) translateZ(0);
@@ -1126,9 +1300,9 @@ html[dir="rtl"] .message-bubble.user {
   opacity: 0;
   pointer-events: none;
   margin-top: 0 !important;
-  transition: grid-template-rows 0.3s cubic-bezier(0.25, 1, 0.5, 1),
-              opacity 0.24s cubic-bezier(0.25, 1, 0.5, 1),
-              margin-top 0.3s cubic-bezier(0.25, 1, 0.5, 1);
+  transition: grid-template-rows 0.3s cubic-bezier(0.25, 1, 0.5, 1) 0s,
+              opacity 0.24s cubic-bezier(0.25, 1, 0.5, 1) 0s,
+              margin-top 0.3s cubic-bezier(0.25, 1, 0.5, 1) 0s;
 }
 
 .message-action-toolbar-inner {
@@ -1137,7 +1311,7 @@ html[dir="rtl"] .message-bubble.user {
   display: flex;
   align-items: center;
   transform: translateY(3px);
-  transition: transform 0.26s cubic-bezier(0.25, 1, 0.5, 1);
+  transition: transform 0.26s cubic-bezier(0.25, 1, 0.5, 1) 0s;
 }
 
 .message-bubble:hover .message-action-toolbar,
@@ -1147,12 +1321,14 @@ html[dir="rtl"] .message-bubble.user {
   opacity: 1;
   pointer-events: auto;
   margin-top: 8px !important;
+  transition-delay: 0.2s;
 }
 
 .message-bubble:hover .message-action-toolbar-inner,
 .message-bubble:focus-within .message-action-toolbar-inner,
 .message-action-toolbar.is-active .message-action-toolbar-inner {
   transform: translateY(0);
+  transition-delay: 0.2s;
 }
 
 .assistant-action-btn {
@@ -1276,7 +1452,7 @@ html[dir="ltr"] .rich-chat-input:empty::before {
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.28);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
-  background-color: rgba(15, 23, 42, 0.95);
+  background-color: rgba(10, 10, 10, 0.88);
   user-select: auto;
   -webkit-user-select: auto;
   cursor: pointer;
@@ -1317,7 +1493,7 @@ html[dir="ltr"] .rich-chat-input:empty::before {
   bottom: 125%;
   right: 50%;
   transform: translateX(50%);
-  background-color: #0b0c10;
+  background-color: #0b0b0b;
   border: 1px solid var(--border-strong);
   color: var(--text-primary);
   padding: 8px 12px;
@@ -1361,19 +1537,25 @@ html[dir="ltr"] .rich-chat-input:empty::before {
   color: var(--text-secondary);
 }
 
-/* Scrollbar Customization */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+/* Complete Global Scrollbar Removal Across Entire Website */
+::-webkit-scrollbar,
+*::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+  background: transparent !important;
 }
 
-::-webkit-scrollbar-track {
-  background: var(--bg-primary);
+::-webkit-scrollbar-track,
+*::-webkit-scrollbar-track {
+  display: none !important;
+  background: transparent !important;
 }
 
-::-webkit-scrollbar-thumb {
-  background: var(--border-strong);
-  border-radius: 3px;
+::-webkit-scrollbar-thumb,
+*::-webkit-scrollbar-thumb {
+  display: none !important;
+  background: transparent !important;
 }
 
 /* ==========================================================================
@@ -1426,7 +1608,7 @@ html[dir="ltr"] .rich-chat-input:empty::before {
 .sub-node-tooltip {
   position: absolute;
   bottom: calc(100% + 12px);
-  background: rgba(14, 16, 24, 0.95);
+  background: rgba(15, 15, 15, 0.95);
   border: 1px solid var(--border-subtle);
   padding: 10px 16px;
   border-radius: var(--radius-md);
@@ -1448,7 +1630,7 @@ html[dir="ltr"] .rich-chat-input:empty::before {
   right: 50%;
   width: 12px;
   height: 12px;
-  background: rgba(14, 16, 24, 0.95);
+  background: rgba(15, 15, 15, 0.95);
   border-left: 1px solid var(--border-subtle);
   border-bottom: 1px solid var(--border-subtle);
   transform: translate(50%, -50%) rotate(-45deg);
@@ -1524,7 +1706,7 @@ html[dir="ltr"] .rich-chat-input:empty::before {
   flex-grow: 0;
   box-sizing: border-box;
   border-radius: 50%;
-  background-color: #0e1017 !important;
+  background-color: #0f0f0f !important;
   border: 2px solid var(--border-strong);
   display: flex;
   align-items: center;
@@ -1537,25 +1719,25 @@ html[dir="ltr"] .rich-chat-input:empty::before {
 }
 
 .circle-prayer-node.status-on_time {
-  background-color: #0e1017 !important;
+  background-color: #0f0f0f !important;
   border-color: var(--status-on-time);
   color: var(--status-on-time);
 }
 
 .circle-prayer-node.status-late {
-  background-color: #0e1017 !important;
+  background-color: #0f0f0f !important;
   border-color: var(--status-late);
   color: var(--status-late);
 }
 
 .circle-prayer-node.status-qada {
-  background-color: #0e1017 !important;
+  background-color: #0f0f0f !important;
   border-color: var(--status-qada);
   color: var(--status-qada);
 }
 
 .circle-prayer-node.status-missed {
-  background-color: #0e1017 !important;
+  background-color: #0f0f0f !important;
   border-color: var(--status-missed);
   color: var(--status-missed);
 }
@@ -1590,7 +1772,7 @@ html[dir="ltr"] .rich-chat-input:empty::before {
   background-color: rgba(0, 0, 0, 0.70);
   backdrop-filter: blur(16px) !important;
   -webkit-backdrop-filter: blur(16px) !important;
-  z-index: 1000;
+  z-index: 10000;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1712,7 +1894,7 @@ html[dir="ltr"] .rich-chat-input:empty::before {
 .sub-node-tooltip {
   position: absolute;
   bottom: calc(100% + 12px);
-  background: rgba(14, 16, 24, 0.95);
+  background: rgba(15, 15, 15, 0.95);
   border: 1px solid var(--border-subtle);
   padding: 10px 16px;
   border-radius: var(--radius-md);
@@ -1734,7 +1916,7 @@ html[dir="ltr"] .rich-chat-input:empty::before {
   right: 50%;
   width: 12px;
   height: 12px;
-  background: rgba(14, 16, 24, 0.95);
+  background: rgba(15, 15, 15, 0.95);
   border-left: 1px solid var(--border-subtle);
   border-bottom: 1px solid var(--border-subtle);
   transform: translate(50%, -50%) rotate(-45deg);
@@ -1920,7 +2102,7 @@ html[dir="ltr"] .rich-chat-input:empty::before {
 }
 
 .btn-primary:hover:not(:disabled) {
-  background-color: #e2e8f0;
+  background-color: #e5e5e5;
   border-color: rgba(255, 255, 255, 0.6);
   transform: translateY(-1px);
 }

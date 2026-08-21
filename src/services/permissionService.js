@@ -1,21 +1,55 @@
 import { getSettings, saveSettings, savePrayerTimesCache } from './storage.js';
 import { APP_EVENTS, PRAYER_NAMES } from './prayerConstants.js';
-import { cleanTimeString, toWesternDigits } from './timeUtils.js';
+import { toWesternDigits } from './timeUtils.js';
 import { logError } from './errorLogger.js';
 import { calculateOfflinePrayerTimes } from './adhanCalculator.js';
+import { fetchAladhanPrayerTimesByCoordinates as fetchAladhanCoords } from './aladhanApiService.js';
+import {
+  getLocalizedCountryName,
+  cleanAdministrativePrefixesAndDirections,
+  getCuratedCitiesForCountry,
+} from './countryLocalization.js';
 
-// 1. Notification Permission Request
+// 1. Notification Permission Status & Request
+export function getNotificationPermission() {
+  if (typeof window === 'undefined') {
+    return 'unsupported';
+  }
+  const NotifClass = typeof Notification !== 'undefined' ? Notification : window.Notification;
+  if (!NotifClass) {
+    return 'unsupported';
+  }
+  return NotifClass.permission || 'default';
+}
+
 export async function requestNotificationsPermission() {
-  if (typeof window === 'undefined' || !('Notification' in window)) {
+  if (typeof window === 'undefined') {
+    return 'unsupported';
+  }
+  const NotifClass = typeof Notification !== 'undefined' ? Notification : window.Notification;
+  if (!NotifClass) {
     return 'unsupported';
   }
 
-  if (Notification.permission === 'granted') {
+  if (NotifClass.permission === 'granted') {
     return 'granted';
   }
 
   try {
-    const permission = await Notification.requestPermission();
+    let permission;
+    if (typeof NotifClass.requestPermission === 'function') {
+      const res = NotifClass.requestPermission();
+      if (res && typeof res.then === 'function') {
+        permission = await res;
+      } else {
+        permission = await new Promise((resolve) => {
+          NotifClass.requestPermission(resolve);
+        });
+      }
+    } else {
+      permission = NotifClass.permission;
+    }
+
     if (permission === 'granted') {
       const currentSettings = getSettings();
       const isEn = currentSettings?.language === 'en';
@@ -27,84 +61,226 @@ export async function requestNotificationsPermission() {
     return permission;
   } catch (err) {
     console.warn('Notification permission error:', err);
-    return Notification.permission;
+    return NotifClass ? NotifClass.permission : 'unsupported';
   }
 }
 
-// 2. Send Native Browser Notification
-export function sendAdhanNotification(title, body) {
-  if (typeof window === 'undefined' || !('Notification' in window)) return;
-  if (Notification.permission !== 'granted') return;
+// Helper to determine if user is outside the website (different tab, minimized, or window unfocused)
+export function isUserOutsideApp() {
+  if (typeof document === 'undefined') return true;
+  const isHidden = document.visibilityState === 'hidden';
+  const hasFocus = typeof document.hasFocus === 'function' ? document.hasFocus() : true;
+  return isHidden || !hasFocus;
+}
 
+// 2. Send Prominent External Web Notification (via direct Notification constructor with ServiceWorker backup)
+// Only dispatched externally when the user is outside the site (unless explicitly forced via forceExternal)
+export function sendBrowserNotification(title, body, options = {}) {
+  if (typeof window === 'undefined') {
+    return { success: false, reason: 'unsupported' };
+  }
+  const NotifClass = typeof Notification !== 'undefined' ? Notification : window.Notification;
+  if (!NotifClass) {
+    return { success: false, reason: 'unsupported' };
+  }
+
+  if (NotifClass.permission !== 'granted') {
+    return { success: false, reason: NotifClass.permission };
+  }
+
+  // STRICT USER RULE: External desktop notifications only dispatch when user is outside the site
+  if (!options.forceExternal && !isUserOutsideApp()) {
+    return { success: false, reason: 'user_active_inside_app' };
+  }
+
+  const origin = typeof window !== 'undefined' && window.location && window.location.origin
+    ? window.location.origin
+    : '';
+
+  const toAbsoluteUrl = (url) => {
+    if (!url) return '';
+    if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:') || url.startsWith('blob:')) {
+      return url;
+    }
+    const cleanPath = url.startsWith('/') ? url : `/${url}`;
+    return origin ? `${origin}${cleanPath}` : cleanPath;
+  };
+
+  const defaultIcon = toAbsoluteUrl('/pwa-192x192.png');
+  const defaultBadge = toAbsoluteUrl('/pwa-192x192.png');
+
+  const notifOptions = {
+    body: body || '',
+    icon: options.icon ? toAbsoluteUrl(options.icon) : defaultIcon,
+    badge: options.badge ? toAbsoluteUrl(options.badge) : defaultBadge,
+    tag: options.tag || `habit-tracker-${Date.now()}`,
+    renotify: options.renotify ?? true,
+    requireInteraction: options.requireInteraction ?? true, // Prominent notification on OS desktop
+    silent: options.silent ?? false,
+    dir: options.dir || (typeof document !== 'undefined' && document.documentElement.dir === 'rtl' ? 'rtl' : 'auto'),
+    lang: options.lang || (typeof document !== 'undefined' && document.documentElement.lang ? document.documentElement.lang : 'ar'),
+    ...options,
+  };
+
+  // Ensure absolute urls even if overridden in options
+  if (notifOptions.icon) notifOptions.icon = toAbsoluteUrl(notifOptions.icon);
+  if (notifOptions.badge) notifOptions.badge = toAbsoluteUrl(notifOptions.badge);
+
+  // 1. Direct window Notification constructor (Standard & immediate on Windows/Mac desktop)
   try {
-    const notif = new Notification(title, {
-      body: body,
-      icon: '/salam.svg',
-      badge: '/salam.svg',
-      tag: 'adhan-alert',
-      renotify: true,
-      silent: false,
-    });
-    notif.onclick = () => {
-      window.focus();
-      notif.close();
+    const notif = new NotifClass(title, notifOptions);
+    notif.onclick = (event) => {
+      try {
+        if (typeof window !== 'undefined') {
+          window.focus();
+        }
+      } catch {}
+      try {
+        if (event && event.target && typeof event.target.close === 'function') {
+          event.target.close();
+        } else if (typeof notif.close === 'function') {
+          notif.close();
+        }
+      } catch {}
     };
-  } catch (e) {
-    console.warn('Failed to display notification:', e);
+
+    return { success: true, method: 'window' };
+  } catch (winErr) {
+    console.warn('[Notifications] Rich constructor failed, trying minimal constructor:', winErr);
+    try {
+      const notifSimple = new NotifClass(title, { body: body || '' });
+      notifSimple.onclick = (event) => {
+        try {
+          if (typeof window !== 'undefined') {
+            window.focus();
+          }
+        } catch {}
+        try {
+          if (event && event.target && typeof event.target.close === 'function') {
+            event.target.close();
+          } else if (typeof notifSimple.close === 'function') {
+            notifSimple.close();
+          }
+        } catch {}
+      };
+      return { success: true, method: 'window_simple' };
+    } catch (simpleErr) {
+      console.warn('[Notifications] Simple constructor failed:', simpleErr);
+    }
   }
+
+  // 2. Fallback for environments where window constructor throws (e.g. ServiceWorker-only contexts)
+  if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+    try {
+      const dispatchViaReg = (reg) => {
+        if (reg && typeof reg.showNotification === 'function') {
+          return reg.showNotification(title, notifOptions).catch(() => {
+            return reg.showNotification(title, { body: body || '' }).catch(() => {});
+          });
+        }
+      };
+
+      if (typeof navigator.serviceWorker.getRegistration === 'function') {
+        navigator.serviceWorker.getRegistration().then((reg) => {
+          if (reg) {
+            dispatchViaReg(reg);
+          } else if (navigator.serviceWorker.ready) {
+            Promise.race([
+              navigator.serviceWorker.ready,
+              new Promise((_, reject) => setTimeout(() => reject(new Error('SW ready timeout')), 1000)),
+            ]).then((readyReg) => {
+              dispatchViaReg(readyReg);
+            }).catch(() => {});
+          }
+        }).catch((swErr) => {
+          console.warn('[Notifications] ServiceWorker fallback dispatch error:', swErr);
+        });
+      } else if (navigator.serviceWorker.ready) {
+        Promise.resolve(navigator.serviceWorker.ready).then((reg) => {
+          dispatchViaReg(reg);
+        }).catch(() => {});
+      }
+
+      return { success: true, method: 'serviceWorker' };
+    } catch (e) {
+      console.warn('[Notifications] ServiceWorker fallback dispatch failed:', e);
+    }
+  }
+
+  return { success: false, reason: 'dispatch_failed' };
 }
 
-function cleanMajorCityName(rawName) {
-  if (!rawName || typeof rawName !== 'string') return '';
-  return rawName
-    .replace(/^(ولاية|محافظة|منطقة|بلدية|إقليم|دائرة|Gouvernorat de|Governorate of|Province of|Delegation of|Délégation de|City of|Municipality of)\s+/i, '')
-    .replace(/\s+(Governorate|Province|Delegation|District|Municipality)$/i, '')
-    .trim();
+// Backward-compatible wrapper for Adhan alerts
+export function sendAdhanNotification(title, body, options = {}) {
+  return sendBrowserNotification(title, body, { tag: 'adhan-reminder', ...options });
 }
 
-// 3. Live Reverse Geocoding from Fresh Coordinates (Zero Memory / Zero Cache)
+// 3. Reverse Geocode Coordinates via OpenStreetMap Nominatim
 export async function reverseGeocodeCoords(latitude, longitude) {
-  // Provider 1: BigDataCloud Reverse Geocoding (Prioritizes principal administrative subdivision & major city)
   try {
-    const bdcUrl = `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${latitude}&longitude=${longitude}&localityLanguage=en`;
-    const response = await fetch(bdcUrl);
-    if (response.ok) {
-      const data = await response.json();
-      const rawCity = data.city || cleanMajorCityName(data.principalSubdivision) || data.locality || '';
-      const cleanCity = cleanMajorCityName(rawCity);
-      const country = data.countryName || '';
-      if (cleanCity && country) {
-        return { city: cleanCity, country, success: true };
-      }
-    }
-  } catch (e) {
-    console.warn('BigDataCloud reverse geocode error:', e);
-  }
-
-  // Provider 2: OpenStreetMap Nominatim (Extracts major city/governorate, ignores sub-neighborhoods)
-  try {
-    const osmUrl = `https://nominatim.openstreetmap.org/reverse?lat=${latitude}&lon=${longitude}&format=json&accept-language=en`;
-    const response = await fetch(osmUrl, { headers: { 'Accept': 'application/json' } });
-    if (response.ok) {
-      const data = await response.json();
+    const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=10&addressdetails=1&accept-language=en`;
+    const res = await fetch(url, {
+      headers: { 'Accept': 'application/json' },
+    });
+    if (res.ok) {
+      const data = await res.json();
       const addr = data.address || {};
-      const rawCity = addr.city || addr.town || cleanMajorCityName(addr.state) || cleanMajorCityName(addr.county) || addr.municipality || '';
-      const cleanCity = cleanMajorCityName(rawCity);
-      const country = addr.country || '';
-      if (cleanCity && country) {
-        return { city: cleanCity, country, success: true };
-      }
-    }
-  } catch (e) {
-    console.warn('Nominatim reverse geocode error:', e);
-  }
+      const rawCountry = addr.country || '';
+      const stdCountry = getLocalizedCountryName(rawCountry, 'en') || rawCountry;
 
-  return { city: '', country: '', success: false };
+      const candidates = [
+        addr.city,
+        addr.town,
+        addr.municipality,
+        addr.county,
+        addr.state,
+      ].filter(Boolean);
+
+      const curatedCities = getCuratedCitiesForCountry(stdCountry);
+      let resolvedCity = '';
+
+      // 1. Try to match candidate against curated major cities/governorates in that country
+      for (const cand of candidates) {
+        const parsed = cleanAdministrativePrefixesAndDirections(cand);
+        const candBase = (parsed.base || '').toLowerCase();
+        if (!candBase) continue;
+
+        const match = curatedCities.find((c) => {
+          const cLower = c.toLowerCase();
+          return cLower === candBase || cLower.includes(candBase) || candBase.includes(cLower);
+        });
+
+        if (match) {
+          resolvedCity = match;
+          break;
+        }
+      }
+
+      // 2. Fallback to clean base of primary candidate
+      if (!resolvedCity) {
+        const primary = addr.city || addr.town || addr.municipality || addr.county || addr.state || '';
+        const parsed = cleanAdministrativePrefixesAndDirections(primary);
+        resolvedCity = parsed.base
+          ? (parsed.base.charAt(0).toUpperCase() + parsed.base.slice(1))
+          : primary;
+      }
+
+      return { success: true, city: resolvedCity, country: stdCountry };
+    }
+  } catch (err) {
+    console.warn('Reverse geocoding error:', err);
+  }
+  return { success: false };
 }
 
-// 4. Fetch Accurate Prayer Times by Coordinates (Client-side adhan-js Engine)
+// 4. Fetch Accurate Prayer Times by Coordinates (Aladhan API with local fallback)
 export async function fetchPrayerTimesByCoordinates(latitude, longitude, targetDateStr = '', countryName = '') {
   try {
+    const aladhanRes = await fetchAladhanCoords(latitude, longitude, targetDateStr);
+    if (aladhanRes && aladhanRes.success && aladhanRes.times) {
+      return aladhanRes;
+    }
+
     const settings = typeof window !== 'undefined' ? getSettings() : {};
     let targetDateObj = new Date();
     if (targetDateStr) {
@@ -221,8 +397,8 @@ export async function requestFreshLocationFromScratch(onSuccessCallback = null) 
 
 // 6. Background Adhan Real-Time Alerts
 export function checkAndNotifyCurrentAdhan(prayerTimes, language = 'ar') {
-  if (typeof window === 'undefined' || !('Notification' in window)) return;
-  if (Notification.permission !== 'granted') return;
+  if (typeof window === 'undefined') return;
+  if (getNotificationPermission() !== 'granted') return;
   if (!prayerTimes) return;
 
   const now = new Date();
@@ -233,16 +409,24 @@ export function checkAndNotifyCurrentAdhan(prayerTimes, language = 'ar') {
 
   PRAYER_NAMES.forEach((pObj) => {
     const id = pObj.id;
-    const adhanTime = prayerTimes[id];
-    if (adhanTime && adhanTime === currentHHMM) {
+    const rawTime = prayerTimes[id];
+    if (!rawTime) return;
+    const adhanTime = toWesternDigits(String(rawTime).trim()).slice(0, 5);
+    if (adhanTime === currentHHMM) {
       const notifiedKey = `adhan_notified_${todayDateStr}_${id}_${currentHHMM}`;
-      if (!sessionStorage.getItem(notifiedKey)) {
-        sessionStorage.setItem(notifiedKey, 'true');
-        const pName = isEn ? pObj.nameEn : pObj.nameAr;
-        const title = isEn ? `Time for ${pName} Prayer` : `حان الآن موعد أذان صلاة ${pName}`;
-        const body = isEn ? `Adhan for ${pName} prayer has arrived at ${adhanTime}.` : `دخول وقت صلاة ${pName}، تقبل الله منا ومنكم صالح الأعمال.`;
-        sendAdhanNotification(title, body);
-      }
+      try {
+        if (typeof sessionStorage !== 'undefined' && sessionStorage.getItem(notifiedKey)) {
+          return;
+        }
+        if (typeof sessionStorage !== 'undefined') {
+          sessionStorage.setItem(notifiedKey, 'true');
+        }
+      } catch {}
+
+      const pName = isEn ? pObj.nameEn : pObj.nameAr;
+      const title = isEn ? `Time for ${pName} Prayer` : `حان الآن موعد أذان صلاة ${pName}`;
+      const body = isEn ? `Adhan for ${pName} prayer has arrived at ${adhanTime}.` : `دخول وقت صلاة ${pName}، تقبل الله منا ومنكم صالح الأعمال.`;
+      sendAdhanNotification(title, body);
     }
   });
 }

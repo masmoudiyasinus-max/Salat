@@ -230,15 +230,27 @@ export const ARABIC_COUNTRY_NAMES = {
   'tonga': 'تونغا',
   'trinidad and tobago': 'ترينيداد وتوباغو',
   'tunisia': 'تونس',
+  'tunisie': 'تونس',
+  'tunis': 'تونس',
   'turkey': 'تركيا',
+  'turquie': 'تركيا',
+  'türkiye': 'تركيا',
   'turks and caicos islands': 'جزر توركس وكايكوس',
   'turkmenistan': 'تركمانستان',
   'tuvalu': 'توفالو',
   'uganda': 'أوغندا',
   'ukraine': 'أوكرانيا',
   'united arab emirates': 'الإمارات العربية المتحدة',
+  'uae': 'الإمارات العربية المتحدة',
+  'emirats arabes unis': 'الإمارات العربية المتحدة',
+  'émirats arabes unis': 'الإمارات العربية المتحدة',
   'united kingdom': 'المملكة المتحدة (بريطانيا)',
+  'royaume-uni': 'المملكة المتحدة (بريطانيا)',
+  'uk': 'المملكة المتحدة (بريطانيا)',
   'united states': 'الولايات المتحدة الأمريكية',
+  'usa': 'الولايات المتحدة الأمريكية',
+  'etats-unis': 'الولايات المتحدة الأمريكية',
+  'états-unis': 'الولايات المتحدة الأمريكية',
   'uruguay': 'أوروغواي',
   'uzbekistan': 'أوزبكستان',
   'vanuatu': 'فانواتو',
@@ -248,8 +260,66 @@ export const ARABIC_COUNTRY_NAMES = {
   'vietnam': 'فيتنام',
   'wallis and futuna': 'واليس وفوتونا',
   'yemen': 'اليمن',
+  'yémen': 'اليمن',
   'zambia': 'زامبيا',
   'zimbabwe': 'زيمبابوي',
+  // Multilingual aliases for Arab & Islamic nations
+  'algerie': 'الجزائر',
+  'algérie': 'الجزائر',
+  'maroc': 'المغرب',
+  'egypte': 'مصر',
+  'égypte': 'مصر',
+  'arabie saoudite': 'المملكة العربية السعودية',
+  'jordanie': 'الأردن',
+  'syrie': 'سوريا',
+  'liban': 'لبنان',
+  'irak': 'العراق',
+  'koweit': 'الكويت',
+  'bahrein': 'البحرين',
+  'soudan': 'السودان',
+  'libye': 'ليبيا',
+  'mauritanie': 'موريتانيا',
+  'allemagne': 'ألمانيا',
+  'espagne': 'إسبانيا',
+  'italie': 'إيطاليا',
+  'belgique': 'بلجيكا',
+  'suisse': 'سويسرا',
+};
+
+// Canonical English Country Map for clean English display
+const CANONICAL_ENGLISH_COUNTRY_MAP = {
+  'tunisie': 'Tunisia',
+  'tunis': 'Tunisia',
+  'algerie': 'Algeria',
+  'algérie': 'Algeria',
+  'maroc': 'Morocco',
+  'egypte': 'Egypt',
+  'égypte': 'Egypt',
+  'israel': 'Palestine',
+  'arabie saoudite': 'Saudi Arabia',
+  'emirats arabes unis': 'United Arab Emirates',
+  'émirats arabes unis': 'United Arab Emirates',
+  'uae': 'United Arab Emirates',
+  'royaume-uni': 'United Kingdom',
+  'uk': 'United Kingdom',
+  'etats-unis': 'United States',
+  'états-unis': 'United States',
+  'usa': 'United States',
+  'allemagne': 'Germany',
+  'espagne': 'Spain',
+  'italie': 'Italy',
+  'belgique': 'Belgium',
+  'suisse': 'Switzerland',
+  'turquie': 'Turkey',
+  'türkiye': 'Turkey',
+  'jordanie': 'Jordan',
+  'syrie': 'Syria',
+  'liban': 'Lebanon',
+  'irak': 'Iraq',
+  'soudan': 'Sudan',
+  'libye': 'Libya',
+  'mauritanie': 'Mauritania',
+  'yémen': 'Yemen',
 };
 
 /**
@@ -257,16 +327,27 @@ export const ARABIC_COUNTRY_NAMES = {
  */
 export function getLocalizedCountryName(englishCountryName, language = 'ar') {
   if (!englishCountryName || typeof englishCountryName !== 'string') return '';
-  const clean = englishCountryName.trim().toLowerCase();
+  const rawLower = englishCountryName.trim().toLowerCase();
+  const clean = rawLower.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 
   if (language === 'en') {
+    if (CANONICAL_ENGLISH_COUNTRY_MAP[rawLower]) return CANONICAL_ENGLISH_COUNTRY_MAP[rawLower];
+    if (CANONICAL_ENGLISH_COUNTRY_MAP[clean]) return CANONICAL_ENGLISH_COUNTRY_MAP[clean];
     if (clean === 'israel') return 'Palestine';
     return englishCountryName;
   }
 
   // Arabic localization
+  if (ARABIC_COUNTRY_NAMES[rawLower]) {
+    return ARABIC_COUNTRY_NAMES[rawLower];
+  }
   if (ARABIC_COUNTRY_NAMES[clean]) {
     return ARABIC_COUNTRY_NAMES[clean];
+  }
+
+  // If already pure Arabic
+  if (/[\u0600-\u06FF]/.test(englishCountryName)) {
+    return englishCountryName;
   }
 
   return englishCountryName;
@@ -301,6 +382,193 @@ export const PALESTINIAN_CITIES = [
   'Ashkelon',
   'Ashdod',
 ];
+
+export const TUNISIAN_CITIES = [
+  'Tunis',
+  'Sfax',
+  'Sousse',
+  'Kairouan',
+  'Bizerte',
+  'Gabes',
+  'Ariana',
+  'Gafsa',
+  'Monastir',
+  'Ben Arous',
+  'Kasserine',
+  'Medenine',
+  'Nabeul',
+  'Tataouine',
+  'Beja',
+  'Jendouba',
+  'Mahdia',
+  'Siliana',
+  'Kebili',
+  'Tozeur',
+  'Zaghouan',
+  'Manouba',
+  'Kef',
+  'Sidi Bouzid',
+  'Djerba',
+  'Hammamet',
+  'Marsa',
+  'Zarzis',
+  'Kelibia',
+  'Moknine',
+];
+
+export const SAUDI_CITIES = [
+  'Riyadh',
+  'Makkah',
+  'Madinah',
+  'Jeddah',
+  'Dammam',
+  'Taif',
+  'Tabuk',
+  'Buraidah',
+  'Khamis Mushait',
+  'Abha',
+  'Al Khobar',
+  'Najran',
+  'Yanbu',
+  'Al Jubail',
+  'Hail',
+  'Al Ahsa',
+  'Jizan',
+  'Sakaka',
+  'Arar',
+  'Al Bahah',
+  'Al Ula',
+  'Dhahran',
+];
+
+export const EGYPTIAN_CITIES = [
+  'Cairo',
+  'Alexandria',
+  'Giza',
+  'Shubra El Kheima',
+  'Port Said',
+  'Suez',
+  'Luxor',
+  'Mansoura',
+  'Tanta',
+  'Asyut',
+  'Ismailia',
+  'Faiyum',
+  'Zagazig',
+  'Aswan',
+  'Damietta',
+  'Damanhur',
+  'Minya',
+  'Beni Suef',
+  'Hurghada',
+  'Qena',
+  'Sohag',
+  'Shibin El Kom',
+  'Banha',
+  'Arish',
+  'Marsa Matruh',
+  'Kafr El Sheikh',
+];
+
+export const ALGERIAN_CITIES = [
+  'Algiers',
+  'Oran',
+  'Constantine',
+  'Annaba',
+  'Blida',
+  'Batna',
+  'Djelfa',
+  'Setif',
+  'Sidi Bel Abbes',
+  'Biskra',
+  'Tebessa',
+  'El Oued',
+  'Skikda',
+  'Tiaret',
+  'Bejaia',
+  'Tlemcen',
+  'Ouargla',
+  'Mostaganem',
+  'Bordj Bou Arreridj',
+  'Chlef',
+  'Souk Ahras',
+  'Medea',
+  'El Eulma',
+  'Touggourt',
+  'Ghardaia',
+  'Saida',
+  'Laghouat',
+  'Msila',
+  'Jijel',
+  'Relizane',
+  'Guelma',
+  'Ain Beida',
+  'Khenchela',
+];
+
+export const MOROCCAN_CITIES = [
+  'Casablanca',
+  'Rabat',
+  'Fes',
+  'Tangier',
+  'Marrakech',
+  'Agadir',
+  'Meknes',
+  'Oujda',
+  'Kenitra',
+  'Tetouan',
+  'Safi',
+  'Temara',
+  'Inezgane',
+  'Mohammedia',
+  'Laayoune',
+  'Khouribga',
+  'Beni Mellal',
+  'El Jadida',
+  'Taza',
+  'Nador',
+  'Settat',
+  'Larache',
+  'Ksar El Kebir',
+  'Khemisset',
+  'Guelmim',
+  'Berrechid',
+  'Taourirt',
+  'Berkane',
+  'Sidi Slimane',
+  'Al Hoceima',
+];
+
+export const EMIRATI_CITIES = [
+  'Dubai',
+  'Abu Dhabi',
+  'Sharjah',
+  'Al Ain',
+  'Ajman',
+  'Ras Al Khaimah',
+  'Fujairah',
+  'Umm Al Quwain',
+  'Khor Fakkan',
+  'Dibba Al Fujairah',
+];
+
+/**
+ * Returns a robust list of curated official cities/governorates for any given country.
+ */
+export function getCuratedCitiesForCountry(countryName) {
+  if (!countryName || typeof countryName !== 'string') return [];
+  const clean = countryName.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+  if (clean === 'tunisia' || clean === 'tunisie' || clean === 'تونس') return TUNISIAN_CITIES;
+  if (clean === 'palestine' || clean === 'israel' || clean === 'فلسطين') return PALESTINIAN_CITIES;
+  if (clean === 'saudi arabia' || clean === 'arabie saoudite' || clean === 'السعودية') return SAUDI_CITIES;
+  if (clean === 'egypt' || clean === 'egypte' || clean === 'مصر') return EGYPTIAN_CITIES;
+  if (clean === 'algeria' || clean === 'algerie' || clean === 'الجزائر') return ALGERIAN_CITIES;
+  if (clean === 'morocco' || clean === 'maroc' || clean === 'المغرب') return MOROCCAN_CITIES;
+  if (clean === 'united arab emirates' || clean === 'emirats arabes unis' || clean === 'الإمارات' || clean === 'uae') return EMIRATI_CITIES;
+
+  return [];
+}
 
 export const ARABIC_CITY_MAP = {
   // Saudi Arabia
@@ -382,37 +650,270 @@ export const ARABIC_CITY_MAP = {
   'akhmin': 'أخميم',
   'matareya': 'المطرية',
 
-  // Tunisia
+  // Tunisia (All 24 Governorates & Major Delegations)
   'tunis': 'تونس العاصمة',
+  'tunis medina': 'تونس المدينة',
+  'délégation tunis médina': 'تونس المدينة',
   'sfax': 'صفاقس',
+  'sfax ouest': 'صفاقس الغربية',
+  'sfax sud': 'صفاقس الجنوبية',
+  'sfax ville': 'صفاقس المدينة',
+  'sfax centre': 'صفاقس المركز',
+  'sakiet ezzit': 'ساقية الزيت',
+  'sakiet eddaier': 'ساقية الدائر',
+  'el hencha': 'الحنشة',
+  'agareb': 'عقارب',
+  'jebeniana': 'جبنيانة',
+  'kerkennah': 'قرقنة',
+  'kerkenah': 'قرقنة',
+  'mahres': 'المحرس',
+  'mahrès': 'المحرس',
+  'graiba': 'الغريبة',
+  'bir ali ben khalifa': 'بئر علي بن خليفة',
+  'skhira': 'الصخيرة',
+  'menzel chaker': 'منزل شاكر',
+  'thyna': 'طينة',
   'sousse': 'سوسة',
-  'kairouan': 'القيروان',
-  'bizerte': 'بنزرت',
-  'gabes': 'قابس',
-  'ariana': 'أريانة',
-  'gafsa': 'قفصة',
+  'sousse ville': 'سوسة المدينة',
+  'sousse jawhara': 'سوسة جوهرة',
+  'sousse riadh': 'سوسة الرياض',
+  'hammam sousse': 'حمام سوسة',
+  'akouda': 'أكودة',
+  'kalaa kebira': 'القلعة الكبيرة',
+  'kalaa seghira': 'القلعة الصغيرة',
+  'msaken': 'مساكن',
+  'enfidha': 'النفيضة',
+  'bouficha': 'بوفيشة',
+  'hergla': 'هرقلة',
+  'sidi bou ali': 'سيدي بوعلي',
+  'sidi el hani': 'سيدي الهاني',
+  'kondar': 'كندار',
   'monastir': 'المنستير',
+  'sahline': 'الساحلين',
+  'moknine': 'المكنين',
+  'ksar hellal': 'قصر هلال',
+  'jemmal': 'جمال',
+  'teboulba': 'طبلبة',
+  'bekalta': 'البقالطة',
+  'sayada': 'صيادة',
+  'lamta': 'لمطة',
+  'bouhjar': 'بوحجر',
+  'ouerdanine': 'الوردانين',
+  'zeramdine': 'زرمدين',
+  'beni hassen': 'بني حسان',
+  'kairouan': 'القيروان',
+  'kairouan nord': 'القيروان الشمالية',
+  'kairouan sud': 'القيروان الجنوبية',
+  'chebika': 'الشبيكة',
+  'sbikha': 'السبيخة',
+  'oueslatia': 'الوسلاتية',
+  'hafouz': 'حفوز',
+  'bou hajla': 'بوحجلة',
+  'nasrallah': 'نصر الله',
+  'chrarda': 'الشراردة',
+  'alaa': 'العلاء',
+  'hajeb el ayoun': 'حاجب العيون',
+  'bizerte': 'بنزرت',
+  'bizerte nord': 'بنزرت الشمالية',
+  'bizerte sud': 'بنزرت الجنوبية',
+  'zarzouna': 'جرونة',
+  'mateur': 'ماطر',
+  'ras jebel': 'رأس الجبل',
+  'menzel bourguiba': 'منزل بورقيبة',
+  'menzel jemil': 'منزل جميل',
+  'tinja': 'تينجة',
+  'ghar el melh': 'غار الملح',
+  'alia': 'العالية',
+  'utique': 'أوتيك',
+  'sejenane': 'سجنان',
+  'joumine': 'جومين',
+  'ghazala': 'غزالة',
+  'ariana': 'أريانة',
+  'ariana ville': 'أريانة المدينة',
+  'soukra': 'سكرى',
+  'raoued': 'رواد',
+  'kalaat el andalous': 'قلعة الأندلس',
+  'sidi thabet': 'سيدي ثابت',
+  'ettadhamen': 'التضامن',
+  'mnihla': 'المنيهلة',
   'ben arous': 'بن عروس',
-  'kasserine': 'القصرين',
-  'medenine': 'مدنين',
-  'nabeul': 'نابل',
-  'tataouine': 'تطاوين',
-  'beja': 'باجة',
-  'jendouba': 'جندوبة',
-  'mahdia': 'المهدية',
-  'siliana': 'سليانة',
-  'kebili': 'قبلي',
-  'tozeur': 'توزر',
-  'zaghouan': 'زغوان',
+  'medina jedida': 'المدينة الجديدة',
+  'el mourouj': 'المروج',
+  'hammam lif': 'حمام الأنف',
+  'hammam chatt': 'حمام الشط',
+  'bou mhel': 'بومهل',
+  'ezzahra': 'الزهراء',
+  'rades': 'رادس',
+  'megrine': 'مقرين',
+  'mohamadia': 'المحمدية',
+  'fouchana': 'فوشانة',
+  'mornag': 'مرناق',
   'manouba': 'منوبة',
+  'den den': 'الدندان',
+  'douar hicher': 'دوار هيشر',
+  'oued ellil': 'وادي الليل',
+  'mornaguia': 'المرناقية',
+  'borj el amri': 'برج العامري',
+  'djedeida': 'الجديدة',
+  'tebourba': 'طبربة',
+  'el battan': 'البطان',
+  'nabeul': 'نابل',
+  'dar chaabane el fehri': 'دار شعبان الفهري',
+  'beni khiar': 'بني خيار',
+  'korba': 'قربة',
+  'menzel temime': 'منزل تميم',
+  'el mida': 'الميدة',
+  'kelibia': 'قليبية',
+  'hammam ghezaz': 'حمام الأغزاز',
+  'el haouaria': 'الهوارية',
+  'takelsa': 'تاكلسة',
+  'soliman': 'سليمان',
+  'menzel bouzelfa': 'منزل بوزلفة',
+  'beni khaled': 'بني خلاد',
+  'grombalia': 'قرمبالية',
+  'bou argoub': 'بوعرقوب',
+  'hammamet': 'الحمامات',
+  'zaghouan': 'زغوان',
+  'zriba': 'الزريبة',
+  'bir mcherga': 'بئر مشارقة',
+  'el fahs': 'الفحص',
+  'nadhour': 'الناظور',
+  'saouaf': 'صواف',
+  'beja': 'باجة',
+  'beja nord': 'باجة الشمالية',
+  'beja sud': 'باجة الجنوبية',
+  'medjez el bab': 'مجاز الباب',
+  'testour': 'تستور',
+  'nefza': 'نفزة',
+  'teboursouk': 'تبرسق',
+  'goubellat': 'قبلاط',
+  'thibar': 'تيبار',
+  'amdoun': 'عمدون',
+  'jendouba': 'جندوبة',
+  'jendouba nord': 'جندوبة الشمالية',
+  'bou salem': 'بوسالم',
+  'tabarka': 'طبرقة',
+  'ain draham': 'عين دراهم',
+  'fernana': 'فرنانة',
+  'ghardimaou': 'غار الدماء',
+  'oued mlez': 'وادي مليز',
+  'balta bou aouane': 'بلطة بوعوان',
   'kef': 'الكاف',
   'el kef': 'الكاف',
-  'djerba': 'جربة',
-  'hammamet': 'الحمامات',
-  'marsa': 'المرسى',
+  'dahmani': 'الدهماني',
+  'tajerouine': 'تاجروين',
+  'jerissa': 'الجريصة',
+  'el ksour': 'القصور',
+  'sers': 'السرس',
+  'nebeur': 'نبر',
+  'sakiet sidi youssef': 'ساقية سيدي يوسف',
+  'kalaat senan': 'قلعة سنان',
+  'kalaat khasba': 'قلعة الخصبة',
+  'touiref': 'الطويرف',
+  'siliana': 'سليانة',
+  'siliana nord': 'سليانة الشمالية',
+  'siliana sud': 'سليانة الجنوبية',
+  'bou arada': 'بوعرادة',
+  'gaafour': 'قعفور',
+  'el krib': 'الكريب',
+  'bourouis': 'بورويس',
+  'makthar': 'مكثر',
+  'rouhia': 'الروحية',
+  'kesra': 'كسرى',
+  'bargou': 'برقو',
+  'el aroussa': 'العروسة',
+  'kasserine': 'القصرين',
+  'kasserine nord': 'القصرين الشمالية',
+  'kasserine sud': 'القصرين الجنوبية',
+  'sbeitla': 'سبيطلة',
+  'feriana': 'فريانة',
+  'fériana': 'فريانة',
+  'sbiba': 'سبيبة',
+  'thala': 'تالة',
+  'haidra': 'حيدرة',
+  'fouj el ammar': 'فوج العمار',
+  'el ayoun': 'العيون',
+  'ezzouhour': 'الزهور',
+  'hassi el ferid': 'حاسي الفريد',
+  'jedelienne': 'جدليان',
+  'majel bel abbes': 'ماجل بلعباس',
+  'sidi bouzid': 'سيدي بوزيد',
+  'sidi bouzid ouest': 'سيدي بوزيد الغربية',
+  'sidi bouzid est': 'سيدي بوزيد الشرقية',
+  'jelma': 'جلمة',
+  'cebbala ouled asker': 'السبالة',
+  'bir el hafey': 'بئر الحفي',
+  'sidi ali ben aoun': 'سيدي علي بن عون',
+  'menzel bouzaiane': 'منزل بوزيان',
+  'meknassy': 'المكناسي',
+  'souk jedid': 'السوق الجديد',
+  'moulares': 'أم العرائس',
+  'redeyef': 'الرديف',
+  'metlaoui': 'المتلوي',
+  'gafsa': 'قفصة',
+  'gafsa nord': 'قفصة الشمالية',
+  'gafsa sud': 'قفصة الجنوبية',
+  'el ksar': 'القصر',
+  'sidi aich': 'سيدي عيش',
+  'sned': 'السند',
+  'belkhir': 'بلخير',
+  'mdhilla': 'المظيلة',
+  'guettar': 'القطار',
+  'tozeur': 'توزر',
+  'degache': 'دقاش',
+  'temegza': 'تمغزة',
+  'nefta': 'نفطة',
+  'hazoua': 'حزوة',
+  'kebili': 'قبلي',
+  'kebili nord': 'قبلي الشمالية',
+  'kebili sud': 'قبلي الجنوبية',
+  'douz': 'دوز',
+  'douz nord': 'دوز الشمالية',
+  'douz sud': 'دوز الجنوبية',
+  'souk lahmar': 'سوق الأحد',
+  'el faouar': 'الفوار',
+  'gabes': 'قابس',
+  'gabes ville': 'قابس المدينة',
+  'gabes ouest': 'قابس الغربية',
+  'gabes sud': 'قابس الجنوبية',
+  'ghannouch': 'غنوش',
+  'el hamma': 'الحامة',
+  'metouia': 'المطوية',
+  'mareth': 'مارث',
+  'matmata': 'مطماطة',
+  'nouvelle matmata': 'مطماطة الجديدة',
+  'menzel habib': 'منزل الحبيب',
+  'dkhila toujane': 'دخيلة توجان',
+  'medenine': 'مدنين',
+  'medenine nord': 'مدنين الشمالية',
+  'medenine sud': 'مدنين الجنوبية',
+  'beni khedache': 'بني خداش',
+  'ben gardane': 'بنقردان',
   'zarzis': 'جرجيس',
-  'kelibia': 'قليبية',
-  'moknine': 'المكنين',
+  'djerba': 'جربة',
+  'djerba houmt souk': 'جربة حومة السوق',
+  'djerba midoun': 'جربة ميدون',
+  'djerba ajim': 'جربة أجيم',
+  'sidi makhlouf': 'سيدي مخلوف',
+  'tataouine': 'تطاوين',
+  'tataouine nord': 'تطاوين الشمالية',
+  'tataouine sud': 'تطاوين الجنوبية',
+  'smir': 'الصمار',
+  'bir lahmar': 'بئر لحمر',
+  'ghomrassen': 'غمراسن',
+  'dhehiba': 'الذهيبة',
+  'remada': 'رمادة',
+  'mahdia': 'المهدية',
+  'bou merdes': 'بومرداس',
+  'ouled chamekh': 'أولاد الشامخ',
+  'chorbane': 'شربان',
+  'hebira': 'هبيرة',
+  'ksour essef': 'قصور الساف',
+  'el djem': 'الجم',
+  'chebba': 'الشابة',
+  'melloulech': 'ملولش',
+  'sidi alouane': 'سيدي علوان',
+  'rejiche': 'رجيش',
 
   // Algeria
   'algiers': 'الجزائر العاصمة',
@@ -593,9 +1094,7 @@ export const ARABIC_CITY_MAP = {
 
   // Lebanon
   'beirut': 'بيروت',
-  'tripoli': 'طرابلس',
   'sidon': 'صيدا',
-  'saida': 'صيدا',
   'tyre': 'صور',
   'sour': 'صور',
   'nabatieh': 'النبطية',
@@ -818,11 +1317,49 @@ export const ARABIC_CITY_MAP = {
 };
 
 /**
+ * Strips French/English/Arabic administrative prefixes and extracts cardinal directions.
+ */
+export function cleanAdministrativePrefixesAndDirections(rawCityName) {
+  if (!rawCityName || typeof rawCityName !== 'string') return { base: '', direction: '', isDirectional: false };
+
+  let normalized = rawCityName
+    .trim()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+
+  let lower = normalized.toLowerCase();
+
+  // 1. Detect cardinal direction
+  let direction = '';
+  if (/\b(ouest|west)\b/i.test(lower)) direction = 'ouest';
+  else if (/\b(est|east)\b/i.test(lower)) direction = 'est';
+  else if (/\b(nord|north)\b/i.test(lower)) direction = 'nord';
+  else if (/\b(sud|south)\b/i.test(lower)) direction = 'sud';
+  else if (/\b(ville|city|centre|center|medina|médina)\b/i.test(lower)) direction = 'ville';
+
+  // 2. Strip administrative prefixes
+  let base = lower
+    .replace(/\b(delegation|délégation|gouvernorat|governorate|wilaya|province|district|commune|municipality|region|state)\s+(de\s+|du\s+|d'|of\s+)?/gi, '')
+    .replace(/\s+\b(delegation|délégation|gouvernorat|governorate|wilaya|province|district|commune|municipality|region|state)\b/gi, '')
+    .replace(/\b(ouest|west|est|east|nord|north|sud|south|ville|centre|center|medina|médina)\b/gi, '')
+    .replace(/^(ولاية|محافظة|منطقة|بلدية|إقليم|دائرة|معتمدية)\s+/gi, '')
+    .replace(/[\s\-_/]+/g, ' ')
+    .trim();
+
+  return {
+    base,
+    direction,
+    isDirectional: Boolean(direction),
+  };
+}
+
+/**
  * Phonetic transliterator from Latin to Arabic for unlisted foreign city names.
+ * Ensures pure Arabic output without any residual Latin characters.
  */
 export function transliterateLatinToArabic(latinStr) {
   if (!latinStr || typeof latinStr !== 'string') return '';
-  if (/[ء-ي]/.test(latinStr)) return latinStr;
+  if (/^[\u0600-\u06FF\s\d\-.,/]+$/.test(latinStr)) return latinStr.trim();
 
   const map = {
     'sh': 'ش', 'ch': 'تش', 'th': 'ث', 'kh': 'خ', 'gh': 'غ', 'ph': 'ف', 'ou': 'و', 'oo': 'و', 'ee': 'ي',
@@ -832,7 +1369,14 @@ export function transliterateLatinToArabic(latinStr) {
     'u': 'و', 'v': 'ف', 'w': 'و', 'x': 'كس', 'y': 'ي', 'z': 'ز',
   };
 
-  let str = latinStr.toLowerCase().replace(/['"`-]/g, ' ').trim();
+  // Strip all diacritics / accents first (e.g. é -> e, à -> a)
+  let str = latinStr
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/['"`-]/g, ' ')
+    .trim();
+
   let words = str.split(/\s+/);
 
   let arWords = words.map((w) => {
@@ -845,6 +1389,9 @@ export function transliterateLatinToArabic(latinStr) {
       } else if (map[w[i]]) {
         res += map[w[i]];
         i += 1;
+      } else if (/[a-zA-Z]/.test(w[i])) {
+        // Skip unmapped Latin char to avoid hybrid words
+        i += 1;
       } else {
         res += w[i];
         i += 1;
@@ -853,27 +1400,64 @@ export function transliterateLatinToArabic(latinStr) {
     return res;
   });
 
-  return arWords.join(' ');
+  return arWords.filter(Boolean).join(' ');
 }
 
 /**
  * Returns localized city name according to active application language ('ar' or 'en').
  */
-export function getLocalizedCityName(englishCityName, language = 'ar') {
-  if (!englishCityName || typeof englishCityName !== 'string') return '';
-  const clean = englishCityName.trim().toLowerCase();
+export function getLocalizedCityName(rawCityName, language = 'ar') {
+  if (!rawCityName || typeof rawCityName !== 'string') return '';
+
+  const parsed = cleanAdministrativePrefixesAndDirections(rawCityName);
+  const rawLower = rawCityName.trim().toLowerCase();
+  const normalized = rawLower.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 
   if (language === 'en') {
-    return englishCityName;
+    // English clean display
+    if (parsed.isDirectional && parsed.base) {
+      const capBase = parsed.base.charAt(0).toUpperCase() + parsed.base.slice(1);
+      const dirMap = { ouest: 'West', est: 'East', nord: 'North', sud: 'South', ville: 'Medina' };
+      return `${capBase} ${dirMap[parsed.direction] || ''}`.trim();
+    }
+    return rawCityName;
   }
 
-  // 1. Direct dictionary match
-  if (ARABIC_CITY_MAP[clean]) {
-    return ARABIC_CITY_MAP[clean];
+  // If already pure Arabic
+  if (/^[\u0600-\u06FF\s\d\-.,/]+$/.test(rawCityName.trim())) {
+    return rawCityName.trim();
   }
 
-  // 2. Transliteration for unlisted cities
-  return transliterateLatinToArabic(englishCityName) || englishCityName;
+  // 1. Direct dictionary match with raw / normalized input
+  if (ARABIC_CITY_MAP[rawLower]) {
+    return ARABIC_CITY_MAP[rawLower];
+  }
+  if (ARABIC_CITY_MAP[normalized]) {
+    return ARABIC_CITY_MAP[normalized];
+  }
+
+  // 2. Match with cleaned base name + direction
+  if (parsed.base && ARABIC_CITY_MAP[parsed.base]) {
+    const baseAr = ARABIC_CITY_MAP[parsed.base];
+    if (parsed.direction === 'ouest') return `${baseAr} الغربية`;
+    if (parsed.direction === 'est') return `${baseAr} الشرقية`;
+    if (parsed.direction === 'nord') return `${baseAr} الشمالية`;
+    if (parsed.direction === 'sud') return `${baseAr} الجنوبية`;
+    if (parsed.direction === 'ville') return `${baseAr} المدينة`;
+    return baseAr;
+  }
+
+  // 3. Transliteration for unlisted cities
+  const transliterated = transliterateLatinToArabic(parsed.base || rawCityName);
+  if (transliterated && !/[a-zA-Z]/.test(transliterated)) {
+    if (parsed.direction === 'ouest') return `${transliterated} الغربية`;
+    if (parsed.direction === 'est') return `${transliterated} الشرقية`;
+    if (parsed.direction === 'nord') return `${transliterated} الشمالية`;
+    if (parsed.direction === 'sud') return `${transliterated} الجنوبية`;
+    return transliterated;
+  }
+
+  return rawCityName;
 }
 
 /**
@@ -907,7 +1491,7 @@ export function matchesStrictPrefix(opt, query) {
   if (value && typeof value === 'string') {
     const valLower = value.toLowerCase();
     if (valLower.startsWith(rawQ)) return true;
-    const valWords = valLower.split(/[\s\-_\/]+/);
+    const valWords = valLower.split(/[\s\-_/]+/);
     if (valWords.some((w) => w.startsWith(rawQ))) return true;
   }
 
@@ -917,7 +1501,7 @@ export function matchesStrictPrefix(opt, query) {
     if (normLabel.startsWith(normQ)) return true;
     if (normLabel.replace(/^ال/, '').startsWith(normQ)) return true;
 
-    const words = normLabel.split(/[\s\-_\/]+/);
+    const words = normLabel.split(/[\s\-_/]+/);
     for (const word of words) {
       if (word.startsWith(normQ)) return true;
       if (word.replace(/^ال/, '').startsWith(normQ)) return true;
@@ -926,4 +1510,6 @@ export function matchesStrictPrefix(opt, query) {
 
   return false;
 }
+
+export { resolveTimezoneForLocation } from './adhanCalculator.js';
 

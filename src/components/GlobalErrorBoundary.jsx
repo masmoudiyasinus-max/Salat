@@ -87,8 +87,8 @@ ${errorInfo?.componentStack || 'N/A'}
             position: 'fixed',
             inset: 0,
             zIndex: 999999,
-            backgroundColor: '#090a0f',
-            color: '#f3f4f6',
+            backgroundColor: '#0a0a0a',
+            color: '#f5f5f5',
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'center',
@@ -102,7 +102,7 @@ ${errorInfo?.componentStack || 'N/A'}
           <div
             style={{
               width: 'min(92%, 850px)',
-              backgroundColor: 'rgba(18, 20, 29, 0.95)',
+              backgroundColor: 'rgba(18, 18, 18, 0.92)',
               border: '1px solid rgba(239, 68, 68, 0.3)',
               borderRadius: '20px',
               padding: '32px',
@@ -142,7 +142,7 @@ ${errorInfo?.componentStack || 'N/A'}
                   <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: '700', color: '#ffffff' }}>
                     شاشة تقرير الأخطاء البرمجية
                   </h2>
-                  <p style={{ margin: '2px 0 0 0', fontSize: '0.82rem', color: '#9ca3af' }}>
+                  <p style={{ margin: '2px 0 0 0', fontSize: '0.82rem', color: '#a3a3a3' }}>
                     تم اعتراض الخطأ وتوثيقه تلقائياً في السجل المركزي الموحد
                   </p>
                 </div>
@@ -183,7 +183,7 @@ ${errorInfo?.componentStack || 'N/A'}
             {/* Code / Terminal Screen Viewer with Centered Copy Button */}
             <div
               style={{
-                backgroundColor: '#0d0f17',
+                backgroundColor: '#0d0d0d',
                 border: '1px solid rgba(255, 255, 255, 0.1)',
                 borderRadius: '14px',
                 overflow: 'hidden',
@@ -201,7 +201,7 @@ ${errorInfo?.componentStack || 'N/A'}
                   direction: 'ltr',
                 }}
               >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.8rem', color: '#9ca3af', fontFamily: 'monospace' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.8rem', color: '#a3a3a3', fontFamily: 'monospace' }}>
                   <Terminal size={14} style={{ color: '#ef4444' }} />
                   <span>Console Stack Trace / Debug Log</span>
                 </div>
@@ -236,7 +236,7 @@ ${errorInfo?.componentStack || 'N/A'}
                   margin: 0,
                   padding: '16px',
                   fontSize: '0.82rem',
-                  color: '#e5e7eb',
+                  color: '#e5e5e5',
                   fontFamily: 'Consolas, Monaco, "Andale Mono", "Ubuntu Mono", monospace',
                   whiteSpace: 'pre-wrap',
                   wordBreak: 'break-word',
@@ -321,7 +321,7 @@ ${errorInfo?.componentStack || 'N/A'}
                 alignItems: 'center',
                 gap: '10px',
                 fontSize: '0.84rem',
-                color: '#9ca3af',
+                color: '#a3a3a3',
                 lineHeight: 1.6,
               }}
             >

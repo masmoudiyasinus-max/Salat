@@ -77,7 +77,7 @@ export function getCityNowDate(timezone) {
 
     const d = new Date(localYear, localMonth, localDay, localHour, localMin, localSec);
     return isNaN(d.getTime()) ? now : d;
-  } catch (e) {
+  } catch {
     return now;
   }
 }

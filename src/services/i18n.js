@@ -4,8 +4,10 @@ export const translations = {
   ar: {
     // Navigation Dock
     navTracker: 'تتبع الصلوات',
-    navAnalytics: 'لوحة التحليلات',
     navChat: 'الدردشة الذكية',
+    navBooks: 'ورد القراءة وقارئ الكتب',
+    navTasbeeh: 'المسبحة الإلكترونية والأذكار',
+    navAudio: 'مشغل الصوتيات والمكتبة',
     navSettings: 'الإعدادات',
     navFocusMode: 'مشاهدة البث المباشر المكرّم بدون عناصر الموقع وبدون تعتيم',
     navFocusModeDisabled: 'التنقل معطل أثناء وضع التركيز',
@@ -81,25 +83,6 @@ export const translations = {
     seconds: 'ثانية',
     autoSyncTime: 'تحديث المواقيت المباشر',
     syncSuccess: 'تم تحديث المواقيت بنجاح',
-
-    // Dashboard View
-    analyticsTitle: 'لوحة التحليلات ومستوى الالتزام',
-    commitmentRate: 'نسبة الالتزام الإجمالية',
-    onTimeRate: 'نسبة الأداء في الوقت',
-    currentStreak: 'أيام الالتزام المتواصل',
-    days: 'أيام',
-    totalPrayers: 'مجموع الصلوات المسجلة',
-    prayersCount: 'صلاة',
-    weeklyPerformance: 'الأداء الأسبوعي',
-    monthlyOverview: 'نظرة عامة للشهر',
-    prayerBreakdown: 'توزيع الصلوات الخمس',
-    legendOnTime: 'في وقتها',
-    legendLate: 'متأخرة',
-    legendQada: 'قضاء',
-    legendMissed: 'لم تُصلَ',
-    noRecordsYet: 'لا توجد بيانات مسجلة كافية حتى الآن',
-    weeklyCommitmentChart: 'مستوى الالتزام الأسبوعي',
-    monthlyPerformanceChart: 'مستوى الأداء الشهري',
 
     // Chat View
     sheikhMuneer: 'الشيخ منير',
@@ -178,8 +161,10 @@ export const translations = {
   en: {
     // Navigation Dock
     navTracker: 'Prayer Tracker',
-    navAnalytics: 'Analytics Dashboard',
     navChat: 'Smart AI Companion',
+    navBooks: 'Book Reader & Daily Ward',
+    navTasbeeh: 'Electronic Tasbeeh & Dhikr',
+    navAudio: 'Audio Library & Player',
     navSettings: 'Settings',
     navFocusMode: 'Watch Live Stream in Focus Mode',
     navFocusModeDisabled: 'Navigation disabled in Focus Mode',
@@ -255,25 +240,6 @@ export const translations = {
     seconds: 's',
     autoSyncTime: 'Live Times Sync',
     syncSuccess: 'Prayer times synced successfully',
-
-    // Dashboard View
-    analyticsTitle: 'Analytics & Commitment Overview',
-    commitmentRate: 'Overall Commitment Rate',
-    onTimeRate: 'On-Time Performance',
-    currentStreak: 'Current Streak',
-    days: 'Days',
-    totalPrayers: 'Total Recorded Prayers',
-    prayersCount: 'prayers',
-    weeklyPerformance: 'Weekly Performance',
-    monthlyOverview: 'Monthly Overview',
-    prayerBreakdown: 'Five Prayers Breakdown',
-    legendOnTime: 'On Time',
-    legendLate: 'Late',
-    legendQada: 'Qada',
-    legendMissed: 'Missed',
-    noRecordsYet: 'No recorded prayer data yet',
-    weeklyCommitmentChart: 'Weekly Commitment Chart',
-    monthlyPerformanceChart: 'Monthly Performance Chart',
 
     // Chat View
     sheikhMuneer: 'Sheikh Muneer',

@@ -1,20 +1,30 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { EyeOff, Volume2, VolumeX, RefreshCw } from 'lucide-react';
 import Header from './components/Header';
 import PrayerTrackerView from './components/PrayerTrackerView';
-import DashboardView from './components/DashboardView';
 import ChatView from './components/ChatView';
 import BookReaderView from './components/BookReaderView';
+import TasbeehView from './components/TasbeehView';
+import AudioPlayerView from './components/AudioPlayerView';
 import SettingsView from './components/SettingsView';
-import { getSettings, saveSettings, getPrayerTimesCache, APP_EVENTS } from './services/storage';
-import { requestNotificationsPermission, checkAndNotifyCurrentAdhan } from './services/permissionService';
-import { logError } from './services/errorLogger.js';
+import MuneerToastNotification from './components/MuneerToastNotification';
+import { getSettings, saveSettings, getRecords, getPrayerTimesCache, APP_EVENTS } from './services/storage';
+import { checkAndNotifyCurrentAdhan } from './services/permissionService';
 import { autoDetectAndInitializeWorldLocation } from './services/adhanCalculator.js';
+import { ensureDailySuggestions } from './services/dailySuggestionsService.js';
+import { AUDIO_EVENTS } from './services/audioStorage.js';
+import {
+  dispatchMuneerSignal,
+  MUNEER_SIGNALS,
+  recordTabSwitchAndCheck,
+  recordBgSwitchAndCheck,
+  evaluatePrayerExpiryRisk,
+} from './services/muneerSignalService.js';
 
 /**
  * Proactively senses image decoding readiness in memory before lifting transition curtain.
  */
-export function checkImageReadiness(url) {
+function checkImageReadiness(url) {
   return new Promise((resolve) => {
     if (!url || typeof url !== 'string') {
       resolve(true);
@@ -53,27 +63,44 @@ export function checkImageReadiness(url) {
   });
 }
 
-export function getAllAvailableScenes(settings) {
-  const scenes = [
-    { mode: 'makkah', type: 'video', id: 'makkah', nameAr: 'بث مباشر للحرم المكي', nameEn: 'Makkah Live Stream' },
-    { mode: 'madinah', type: 'video', id: 'madinah', nameAr: 'بث مباشر للمسجد النبوي', nameEn: 'Madinah Live Stream' },
-  ];
+function getAllAvailableScenes(settings, isOnline = true) {
+  const scenes = [];
 
-  if ((Array.isArray(settings?.customBgImages) && settings.customBgImages.length > 0) || settings?.activeCustomBgImage) {
-    scenes.push({
-      mode: 'custom_image',
-      type: 'image',
-      id: 'custom_image',
-      nameAr: 'صورة مخصصة من حاسوبك',
-      nameEn: 'Custom Device Wallpaper',
-    });
+  // Live video streams are only available when online
+  if (isOnline) {
+    scenes.push(
+      { mode: 'makkah', type: 'video', id: 'makkah', nameAr: 'بث مباشر للحرم المكي', nameEn: 'Makkah Live Stream' },
+      { mode: 'madinah', type: 'video', id: 'madinah', nameAr: 'بث مباشر للمسجد النبوي', nameEn: 'Madinah Live Stream' }
+    );
   }
+
+  // Nature & custom image wallpaper (available online and offline)
+  scenes.push({
+    mode: 'custom_image',
+    type: 'image',
+    id: 'custom_image',
+    nameAr: 'خلفية الطبيعة والصور',
+    nameEn: 'Nature & Custom Wallpaper',
+  });
 
   return scenes;
 }
 
-export function getDesiredBg(settings) {
+function getDesiredBg(settings, isOnline = true) {
   const mode = settings?.bgMode || 'makkah';
+
+  // If user is offline, live YouTube video streams cannot load. Automatically select image wallpaper!
+  if (!isOnline && (mode === 'makkah' || mode === 'madinah')) {
+    const activeImg = settings?.activeCustomBgImage || (Array.isArray(settings?.customBgImages) && settings.customBgImages[0]) || '/nature-meadow.jpg';
+    return {
+      type: 'image',
+      url: activeImg,
+      imageUrl: activeImg,
+      key: activeImg || 'nature-meadow',
+      isOfflineFallback: true,
+    };
+  }
+
   if (mode === 'makkah') {
     return {
       type: 'video',
@@ -89,7 +116,7 @@ export function getDesiredBg(settings) {
     };
   }
   if (mode === 'custom_image') {
-    const activeImg = settings?.activeCustomBgImage || (Array.isArray(settings?.customBgImages) && settings.customBgImages[0]) || '';
+    const activeImg = settings?.activeCustomBgImage || (Array.isArray(settings?.customBgImages) && settings.customBgImages[0]) || '/nature-meadow.jpg';
     if (activeImg) {
       return { type: 'image', url: activeImg, imageUrl: activeImg, key: activeImg };
     }
@@ -102,17 +129,53 @@ export function getDesiredBg(settings) {
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('tracker'); // 'tracker', 'dashboard', 'chat', 'books', 'settings'
+  const [activeTab, setActiveTab] = useState('tracker'); // 'tracker', 'chat', 'books', 'tasbeeh', 'settings'
   const [settings, setSettings] = useState(() => getSettings());
-  const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [isWallpaperFocusMode, setIsWallpaperFocusMode] = useState(false);
   const [isAudioMuted, setIsAudioMuted] = useState(true);
   const isAudioMutedRef = useRef(true);
   const [syncToastMsg, setSyncToastMsg] = useState('');
-
-  // Book Reader & Background Auto-Switch States
   const [isReaderActive, setIsReaderActive] = useState(false);
-  const savedPreviousBgRef = useRef(null);
+  const [isOnline, setIsOnline] = useState(() => (typeof navigator !== 'undefined' ? navigator.onLine : true));
+  const lastTabSwitchTimeRef = useRef(0);
+  const activeTabRef = useRef(activeTab);
+
+  useEffect(() => {
+    activeTabRef.current = activeTab;
+  }, [activeTab]);
+
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true);
+      const isEn = settings?.language === 'en';
+      setSyncToastMsg(isEn ? 'Internet connection restored — Online features unlocked' : 'تمت استعادة الاتصال بالإنترنت — فتح جميع الميزات السحابية بنجاح');
+      setTimeout(() => setSyncToastMsg(''), 3500);
+    };
+    const handleOffline = () => {
+      setIsOnline(false);
+      const isEn = settings?.language === 'en';
+      setSyncToastMsg(isEn ? 'Internet disconnected — Offline mode active (Cloud features locked)' : 'انقطع الاتصال بالإنترنت — تم تفعيل وضع عدم الاتصال وقفل الميزات السحابية');
+      setTimeout(() => setSyncToastMsg(''), 3500);
+    };
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, [settings?.language]);
+
+  // Throttled 0.5s navigation handler preventing frantic page switching
+  const handleNavigateTab = useCallback((targetTab) => {
+    if (isWallpaperFocusMode || targetTab === activeTabRef.current) return;
+    recordTabSwitchAndCheck();
+    const now = Date.now();
+    if (now - lastTabSwitchTimeRef.current < 500) {
+      return; // Cooldown 0.5s to prevent frantic switching
+    }
+    lastTabSwitchTimeRef.current = now;
+    setActiveTab(targetTab);
+  }, [isWallpaperFocusMode]);
 
   const handleStartReading = () => {
     savedPreviousBgRef.current = settings?.bgMode || 'makkah';
@@ -128,11 +191,6 @@ export default function App() {
     }
   };
 
-  // Background Media & Audio States
-  const [bgMuted, setBgMuted] = useState(true);
-  const [bgHidden, setBgHidden] = useState(false);
-  const [isIframeLoaded, setIsIframeLoaded] = useState(false);
-
   useEffect(() => {
     isAudioMutedRef.current = isAudioMuted;
   }, [isAudioMuted]);
@@ -147,7 +205,6 @@ export default function App() {
     const handleSettingsUpdated = (e) => {
       if (e.detail) {
         setSettings(e.detail);
-        setRefreshTrigger((prev) => prev + 1);
       }
     };
     window.addEventListener(APP_EVENTS.SETTINGS_UPDATED, handleSettingsUpdated);
@@ -159,16 +216,23 @@ export default function App() {
     autoDetectAndInitializeWorldLocation();
   }, []);
 
-  // Check Notifications & Adhan Alerts on App Launch
+  // Proactive Background Daily Suggestions Pre-fetching (runs on app boot without needing to open chat)
   useEffect(() => {
-    if ('Notification' in window && Notification.permission === 'default') {
-      requestNotificationsPermission();
-    }
+    const apiKey = (settings?.geminiApiKey || '').trim();
+    if (!apiKey) return;
+    const lang = settings?.language === 'en' ? 'en' : 'ar';
+    ensureDailySuggestions(apiKey, lang).catch(() => {});
+  }, [settings?.geminiApiKey, settings?.language]);
 
-    // Check for Adhan alert every 30 seconds
+  // Background Adhan Alerts & Prayer Expiry Risk Monitoring
+  useEffect(() => {
+    // Check for Adhan alert and Prayer Expiry Risk every 30 seconds (runs continuously even when tab is minimized)
     const adhanTimer = setInterval(() => {
-      if (!document.hidden) {
-        checkAndNotifyCurrentAdhan(getPrayerTimesCache(), settings?.language);
+      const prayerTimes = getPrayerTimesCache();
+      checkAndNotifyCurrentAdhan(prayerTimes, settings?.language);
+      const risk = evaluatePrayerExpiryRisk(prayerTimes, getRecords());
+      if (risk) {
+        dispatchMuneerSignal(MUNEER_SIGNALS.PRAYER_EXPIRY_RISK, risk);
       }
     }, 30000);
 
@@ -178,74 +242,27 @@ export default function App() {
   const makkahIframeRef = useRef(null);
   const madinahIframeRef = useRef(null);
   const fadeTimerRef = useRef(null);
-  const prevTabRef = useRef(activeTab);
-
-  // Automatic live stream synchronization whenever navigating between screens/tabs
-  useEffect(() => {
-    if (prevTabRef.current === activeTab) return;
-    prevTabRef.current = activeTab;
-
-    const mode = settings?.bgMode || 'makkah';
-    if (mode === 'makkah' || mode === 'madinah') {
-      const activeIframe = mode === 'madinah' ? madinahIframeRef.current : makkahIframeRef.current;
-      if (activeIframe && activeIframe.contentWindow) {
-        try {
-          activeIframe.contentWindow.postMessage(
-            JSON.stringify({ event: 'command', func: 'seekTo', args: [99999999, true] }),
-            'https://www.youtube.com'
-          );
-          activeIframe.contentWindow.postMessage(
-            JSON.stringify({ event: 'command', func: 'playVideo', args: '' }),
-            'https://www.youtube.com'
-          );
-        } catch (e) {}
-      }
-    }
-  }, [activeTab, settings?.bgMode]);
+  const chatAudioMuteTimerRef = useRef(null);
+  const chatAudioRestoreTimerRef = useRef(null);
+  const wasAudioActiveBeforeChatRef = useRef(false);
 
   const handleSettingsSaved = (newSettings) => {
     setSettings(newSettings);
   };
 
   const handleRecordUpdated = () => {
-    setRefreshTrigger((prev) => prev + 1);
+    // Record updated event handler
   };
 
-  const handleSyncLiveStream = () => {
-    const wasUnmuted = !isAudioMuted;
-    const mode = settings?.bgMode || 'makkah';
-    const activeIframe = mode === 'madinah' ? madinahIframeRef.current : makkahIframeRef.current;
-
-    if (activeIframe) {
-      const currentSrc = activeIframe.src;
-      activeIframe.src = currentSrc;
-
-      if (wasUnmuted) {
-        [600, 1200, 2000].forEach((delay) => {
-          setTimeout(() => {
-            if (activeIframe && activeIframe.contentWindow) {
-              activeIframe.contentWindow.postMessage(
-                JSON.stringify({ event: 'command', func: 'unMute', args: '' }),
-                'https://www.youtube.com'
-              );
-              activeIframe.contentWindow.postMessage(
-                JSON.stringify({ event: 'command', func: 'setVolume', args: [100] }),
-                'https://www.youtube.com'
-              );
-            }
-          }, delay);
-        });
-      }
+  const handleToggleAudio = useCallback((isAutoTrigger = false) => {
+    if (!isAutoTrigger) {
+      // User manual toggle overrides automatic chat restore
+      wasAudioActiveBeforeChatRef.current = false;
     }
-    const isEn = settings?.language === 'en';
-    setSyncToastMsg(isEn ? 'Live stream synced' : 'تمت مزامنة البث المباشر');
-    setTimeout(() => {
-      setSyncToastMsg('');
-    }, 2500);
-  };
+    const currentSettings = getSettings();
+    const mode = currentSettings?.bgMode || settings?.bgMode || 'makkah';
+    if (mode === 'custom_image' && isAudioMutedRef.current) return;
 
-  const handleToggleAudio = () => {
-    const mode = settings?.bgMode || 'makkah';
     const activeIframe = mode === 'madinah' ? madinahIframeRef.current : makkahIframeRef.current;
     if (!activeIframe || !activeIframe.contentWindow) return;
 
@@ -253,7 +270,7 @@ export default function App() {
       clearInterval(fadeTimerRef.current);
     }
 
-    const nextMuted = !isAudioMuted;
+    const nextMuted = !isAudioMutedRef.current;
     setIsAudioMuted(nextMuted);
     isAudioMutedRef.current = nextMuted;
 
@@ -263,7 +280,7 @@ export default function App() {
       try {
         activeIframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [0] }), 'https://www.youtube.com');
         activeIframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'unMute', args: '' }), 'https://www.youtube.com');
-      } catch (e) {}
+      } catch {}
 
       fadeTimerRef.current = setInterval(() => {
         if (isAudioMutedRef.current) {
@@ -278,7 +295,7 @@ export default function App() {
         if (activeIframe && activeIframe.contentWindow) {
           try {
             activeIframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [vol] }), 'https://www.youtube.com');
-          } catch (e) {}
+          } catch {}
         }
       }, 50);
     } else {
@@ -293,22 +310,105 @@ export default function App() {
             try {
               activeIframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [0] }), 'https://www.youtube.com');
               activeIframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'mute', args: '' }), 'https://www.youtube.com');
-            } catch (e) {}
+            } catch {}
           }
         } else {
           if (activeIframe && activeIframe.contentWindow) {
             try {
               activeIframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [vol] }), 'https://www.youtube.com');
-            } catch (e) {}
+            } catch {}
           }
         }
       }, 50);
     }
-  };
+  }, [settings?.bgMode]);
 
-  const handleNavigateBg = (direction = 1) => {
+  // Smart Chat Tab Audio Management: Automatically triggers audio mute 10s after entering Chat, and restores immediately upon leaving Chat
+  useEffect(() => {
+    if (chatAudioMuteTimerRef.current) {
+      clearTimeout(chatAudioMuteTimerRef.current);
+      chatAudioMuteTimerRef.current = null;
+    }
+    if (chatAudioRestoreTimerRef.current) {
+      clearTimeout(chatAudioRestoreTimerRef.current);
+      chatAudioRestoreTimerRef.current = null;
+    }
+
+    if (activeTab === 'chat') {
+      if (!isAudioMutedRef.current) {
+        wasAudioActiveBeforeChatRef.current = true;
+        chatAudioMuteTimerRef.current = setTimeout(() => {
+          if (activeTabRef.current === 'chat' && !isAudioMutedRef.current) {
+            handleToggleAudio(true);
+          }
+        }, 10000);
+      }
+    } else {
+      if (wasAudioActiveBeforeChatRef.current) {
+        wasAudioActiveBeforeChatRef.current = false;
+        // User directive: Immediately restore audio upon leaving chat
+        if (isAudioMutedRef.current) {
+          handleToggleAudio(true);
+        }
+      }
+    }
+
+    return () => {
+      if (chatAudioMuteTimerRef.current) {
+        clearTimeout(chatAudioMuteTimerRef.current);
+        chatAudioMuteTimerRef.current = null;
+      }
+      if (chatAudioRestoreTimerRef.current) {
+        clearTimeout(chatAudioRestoreTimerRef.current);
+        chatAudioRestoreTimerRef.current = null;
+      }
+    };
+  }, [activeTab, handleToggleAudio]);
+
+  // When local audio playback starts in Audio Player, mute live background stream if unmuted
+  useEffect(() => {
+    const handleAudioPlayStarted = () => {
+      if (!isAudioMutedRef.current) {
+        handleToggleAudio();
+      }
+    };
+    window.addEventListener(AUDIO_EVENTS.PLAYBACK_STARTED, handleAudioPlayStarted);
+    return () => window.removeEventListener(AUDIO_EVENTS.PLAYBACK_STARTED, handleAudioPlayStarted);
+  }, [handleToggleAudio]);
+
+  const handleSyncLiveStream = useCallback(() => {
+    const wasUnmuted = !isAudioMuted;
+    const mode = settings?.bgMode || 'makkah';
+    const activeIframe = mode === 'madinah' ? madinahIframeRef.current : makkahIframeRef.current;
+
+    if (activeIframe) {
+      const currentSrc = activeIframe.src;
+      activeIframe.src = currentSrc;
+
+      if (wasUnmuted) {
+        [600, 1200, 2000].forEach((delay) => {
+          setTimeout(() => {
+            if (activeIframe && activeIframe.contentWindow) {
+              activeIframe.contentWindow.postMessage(
+                JSON.stringify({ event: 'command', func: 'unMute' }),
+                '*'
+              );
+            }
+          }, delay);
+        });
+      }
+    }
+    const isEn = settings?.language === 'en';
+    setSyncToastMsg(isEn ? 'Synced with live broadcast' : 'تمت المزامنة المباشرة مع البث');
+    setTimeout(() => {
+      setSyncToastMsg('');
+    }, 2200);
+  }, [isAudioMuted, settings?.bgMode, settings?.language]);
+
+  const handleNavigateBg = useCallback((direction = 1) => {
+    recordBgSwitchAndCheck();
     const currentSettings = getSettings();
-    const scenes = getAllAvailableScenes(currentSettings);
+    const scenes = getAllAvailableScenes(currentSettings, isOnline);
     if (!scenes || scenes.length === 0) return;
 
     const currentMode = currentSettings.bgMode || 'makkah';
@@ -329,11 +429,20 @@ export default function App() {
     const isEn = updated.language === 'en';
     setSyncToastMsg(isEn ? nextScene.nameEn : nextScene.nameAr);
     setTimeout(() => setSyncToastMsg(''), 2200);
-  };
+  }, [isOnline]);
 
-  // Keyboard Shortcuts: 'm' for Audio, 'f' for Focus Mode, 'l' for Live Sync, ArrowUp/ArrowDown for Page Navigation, ArrowLeft/ArrowRight for Background Switching
+  // Keyboard Shortcuts: 'm' for Audio, 'f' for Focus Mode, 'l' for Live Sync, ArrowUp/ArrowDown for Page Navigation, ArrowLeft/ArrowRight for Background Switching, 1-6 for Direct Tab Switching
   useEffect(() => {
-    const tabs = ['tracker', 'dashboard', 'chat', 'books', 'settings'];
+    const tabs = ['tracker', 'chat', 'books', 'tasbeeh', 'audio', 'settings'];
+
+    const digitMap = {
+      '1': 'tracker', '١': 'tracker', 'Digit1': 'tracker', 'Numpad1': 'tracker',
+      '2': 'chat',    '٢': 'chat',    'Digit2': 'chat',    'Numpad2': 'chat',
+      '3': 'books',   '٣': 'books',   'Digit3': 'books',   'Numpad3': 'books',
+      '4': 'tasbeeh', '٤': 'tasbeeh', 'Digit4': 'tasbeeh', 'Numpad4': 'tasbeeh',
+      '5': 'audio',   '٥': 'audio',   'Digit5': 'audio',   'Numpad5': 'audio',
+      '6': 'settings','٦': 'settings','Digit6': 'settings','Numpad6': 'settings',
+    };
 
     const handleKeyDown = (e) => {
       // If book reader is currently open in active reading mode, completely mute global shortcuts!
@@ -347,9 +456,20 @@ export default function App() {
       const key = e.key || '';
       const code = e.code || '';
 
+      // Direct numeric tab shortcuts: 1 -> tracker, 2 -> chat, 3 -> books, 4 -> tasbeeh, 5 -> settings
+      const targetTab = digitMap[key] || digitMap[code];
+      if (targetTab) {
+        e.preventDefault();
+        handleNavigateTab(targetTab);
+        return;
+      }
+
       if (key === 'ArrowUp' || key === 'Up' || code === 'ArrowUp') {
         e.preventDefault();
         if (isWallpaperFocusMode) return;
+        const now = Date.now();
+        if (now - lastTabSwitchTimeRef.current < 500) return;
+        lastTabSwitchTimeRef.current = now;
         setActiveTab((prev) => {
           const idx = tabs.indexOf(prev);
           const prevIdx = idx > 0 ? idx - 1 : tabs.length - 1;
@@ -358,6 +478,9 @@ export default function App() {
       } else if (key === 'ArrowDown' || key === 'Down' || code === 'ArrowDown') {
         e.preventDefault();
         if (isWallpaperFocusMode) return;
+        const now = Date.now();
+        if (now - lastTabSwitchTimeRef.current < 500) return;
+        lastTabSwitchTimeRef.current = now;
         setActiveTab((prev) => {
           const idx = tabs.indexOf(prev);
           const nextIdx = idx < tabs.length - 1 ? idx + 1 : 0;
@@ -365,35 +488,37 @@ export default function App() {
         });
       } else if (key === 'ArrowRight' || key === 'Right' || code === 'ArrowRight') {
         e.preventDefault();
-        handleNavigateBg(1);
+        const isRtl = document.documentElement.dir === 'rtl';
+        handleNavigateBg(isRtl ? -1 : 1);
       } else if (key === 'ArrowLeft' || key === 'Left' || code === 'ArrowLeft') {
         e.preventDefault();
-        handleNavigateBg(-1);
+        const isRtl = document.documentElement.dir === 'rtl';
+        handleNavigateBg(isRtl ? 1 : -1);
       } else {
         const lowerKey = key ? key.toLowerCase() : '';
-        if (lowerKey === 'm' || lowerKey === 'ك') {
+        if (lowerKey === 'm' || lowerKey === 'ك' || lowerKey === 'ة' || code === 'KeyM') {
           e.preventDefault();
           handleToggleAudio();
-        } else if (lowerKey === 'f' || lowerKey === 'ب') {
+        } else if (lowerKey === 'f' || lowerKey === 'ب' || code === 'KeyF') {
           e.preventDefault();
           setIsWallpaperFocusMode((prev) => !prev);
-        } else if (lowerKey === 'l' || lowerKey === 'م') {
+        } else if (lowerKey === 'l' || lowerKey === 'م' || code === 'KeyL') {
           e.preventDefault();
           handleSyncLiveStream();
         }
       }
     };
 
-    window.addEventListener('keydown', handleKeyDown, true);
-    return () => window.removeEventListener('keydown', handleKeyDown, true);
-  }, [isAudioMuted, isWallpaperFocusMode, isReaderActive]);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleNavigateBg, handleNavigateTab, handleSyncLiveStream, handleToggleAudio, isReaderActive, isWallpaperFocusMode]);
 
-  // Synchronously compute current background directly from settings for 100% instant reactivity
-  const currentBg = getDesiredBg(settings) || { type: 'video', videoId: 'm9-Umj3aL1I', key: 'makkah' };
-  const currentBgKey = currentBg.key || settings?.bgMode || 'makkah';
-  const targetIsImage = currentBg.type === 'image' || settings?.bgMode === 'custom_image';
+  // Synchronously compute current background directly from settings & online state for 100% instant reactivity
+  const currentBg = getDesiredBg(settings, isOnline) || { type: 'image', url: '/nature-meadow.jpg', key: 'nature-meadow' };
+  const currentBgKey = currentBg.key || (isOnline ? (settings?.bgMode || 'makkah') : 'custom_image');
+  const targetIsImage = currentBg.type === 'image' || !isOnline || settings?.bgMode === 'custom_image';
   const targetImageUrl = targetIsImage
-    ? (currentBg.url || settings?.activeCustomBgImage || (Array.isArray(settings?.customBgImages) && settings.customBgImages[0]) || '')
+    ? (currentBg.url || settings?.activeCustomBgImage || (Array.isArray(settings?.customBgImages) && settings.customBgImages[0]) || '/nature-meadow.jpg')
     : '';
 
   // Displayed stage states (Only swapped at exactly 280ms when the screen is 100% solid dark behind the curtain)
@@ -427,7 +552,7 @@ export default function App() {
         try {
           targetIframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'seekTo', args: [99999999, true] }), 'https://www.youtube.com');
           targetIframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'playVideo', args: '' }), 'https://www.youtube.com');
-        } catch (e) {}
+        } catch {}
       }
     }
 
@@ -440,7 +565,7 @@ export default function App() {
             try {
               iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [0] }), 'https://www.youtube.com');
               iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'mute', args: '' }), 'https://www.youtube.com');
-            } catch (e) {}
+            } catch {}
           }
         });
       } else {
@@ -449,7 +574,7 @@ export default function App() {
           try {
             prevIframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [0] }), 'https://www.youtube.com');
             prevIframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'mute', args: '' }), 'https://www.youtube.com');
-          } catch (e) {}
+          } catch {}
         }
       }
     }
@@ -473,21 +598,24 @@ export default function App() {
 
       // If video mode, re-verify live sync & play on target stream
       if (!targetIsImage) {
-        const targetIframe = currentBgKey === 'madinah' ? madinahIframeRef.current : makkahIframeRef.current;
-        if (targetIframe && targetIframe.contentWindow) {
-          try {
-            targetIframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'seekTo', args: [99999999, true] }), 'https://www.youtube.com');
-            targetIframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'playVideo', args: '' }), 'https://www.youtube.com');
-          } catch (e) {}
-        }
+        setTimeout(() => {
+          if (isCancelled) return;
+          const targetIframe = currentBgKey === 'madinah' ? madinahIframeRef.current : makkahIframeRef.current;
+          if (targetIframe && targetIframe.contentWindow) {
+            try {
+              targetIframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'seekTo', args: [99999999, true] }), 'https://www.youtube.com');
+              targetIframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'playVideo', args: '' }), 'https://www.youtube.com');
+            } catch {}
 
-        // Unmute target stream if audio was active
-        if (!isAudioMutedRef.current && targetIframe && targetIframe.contentWindow) {
-          try {
-            targetIframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'unMute', args: '' }), 'https://www.youtube.com');
-            targetIframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [100] }), 'https://www.youtube.com');
-          } catch (e) {}
-        }
+            // Unmute target stream if audio was active
+            if (!isAudioMutedRef.current) {
+              try {
+                targetIframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'unMute', args: '' }), 'https://www.youtube.com');
+                targetIframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [100] }), 'https://www.youtube.com');
+              } catch {}
+            }
+          }
+        }, 150);
       }
 
       // 5. Readiness sensor confirmed! Lift curtain and dissolve over 0.85s
@@ -516,14 +644,18 @@ export default function App() {
     left: '50%',
     width: 'max(100vw, 177.78vh)',
     height: 'max(100vh, 56.25vw)',
-    transform: 'translate(-50%, -50%) scale(1.18) translateZ(0)',
-    WebkitTransform: 'translate(-50%, -50%) scale(1.18) translateZ(0)',
+    transform: isWallpaperFocusMode
+      ? 'translate(-50%, -50%) scale(1.05) translateZ(0)'
+      : 'translate(-50%, -50%) scale(1.18) translateZ(0)',
+    WebkitTransform: isWallpaperFocusMode
+      ? 'translate(-50%, -50%) scale(1.05) translateZ(0)'
+      : 'translate(-50%, -50%) scale(1.18) translateZ(0)',
     backfaceVisibility: 'hidden',
     WebkitBackfaceVisibility: 'hidden',
     pointerEvents: 'none',
     border: 'none',
     filter: isWallpaperFocusMode ? 'none' : 'blur(20px)',
-    transition: 'filter 0.3s ease',
+    transition: 'filter 0.3s ease, transform 0.3s ease, -webkit-transform 0.3s ease',
   };
 
   return (
@@ -556,58 +688,64 @@ export default function App() {
           {syncToastMsg}
         </div>
       )}
+      {/* Real-time Proactive Floating Toast Notification from Sheikh Muneer */}
+      <MuneerToastNotification />
 
-      {/* Layer -4: Dual Persistent Streams & Custom Image Stage */}
+      {/* Layer -4: Exclusive Active Background Stage (Zero background overhead) */}
       {/* Makkah Live Stream */}
-      <div
-        key="makkah_layer"
-        style={{
-          position: 'fixed',
-          inset: 0,
-          zIndex: -4,
-          pointerEvents: 'none',
-          overflow: 'hidden',
-          backgroundColor: '#0a0c12',
-          opacity: displayedMode === 'makkah' ? 1 : 0,
-          visibility: displayedMode === 'makkah' ? 'visible' : 'hidden',
-          transition: 'opacity 0.85s cubic-bezier(0.16, 1, 0.3, 1)',
-        }}
-      >
-        <iframe
-          ref={makkahIframeRef}
-          src={`https://www.youtube.com/embed/${settings?.makkahVideoId || 'm9-Umj3aL1I'}?autoplay=1&mute=1&controls=0&showinfo=0&rel=0&enablejsapi=1&iv_load_policy=3&modestbranding=1&playsinline=1${originParam}`}
-          title="Makkah Live Background Stream"
-          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-          style={iframeCommonStyle}
-        />
-      </div>
+      {displayedMode === 'makkah' && (
+        <div
+          key="makkah_layer"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: -4,
+            pointerEvents: 'none',
+            overflow: 'hidden',
+            backgroundColor: '#0a0a0a',
+            opacity: 1,
+            visibility: 'visible',
+            animation: 'fadeIn 0.35s ease-out',
+          }}
+        >
+          <iframe
+            ref={makkahIframeRef}
+            src={`https://www.youtube.com/embed/${settings?.makkahVideoId || 'm9-Umj3aL1I'}?autoplay=1&mute=1&controls=0&showinfo=0&rel=0&enablejsapi=1&iv_load_policy=3&modestbranding=1&playsinline=1${originParam}`}
+            title="Makkah Live Background Stream"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+            style={iframeCommonStyle}
+          />
+        </div>
+      )}
 
       {/* Madinah Live Stream */}
-      <div
-        key="madinah_layer"
-        style={{
-          position: 'fixed',
-          inset: 0,
-          zIndex: -4,
-          pointerEvents: 'none',
-          overflow: 'hidden',
-          backgroundColor: '#0a0c12',
-          opacity: displayedMode === 'madinah' ? 1 : 0,
-          visibility: displayedMode === 'madinah' ? 'visible' : 'hidden',
-          transition: 'opacity 0.85s cubic-bezier(0.16, 1, 0.3, 1)',
-        }}
-      >
-        <iframe
-          ref={madinahIframeRef}
-          src={`https://www.youtube.com/embed/${settings?.madinahVideoId || 'Rs7St51oDDc'}?autoplay=1&mute=1&controls=0&showinfo=0&rel=0&enablejsapi=1&iv_load_policy=3&modestbranding=1&playsinline=1${originParam}`}
-          title="Madinah Live Background Stream"
-          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-          style={iframeCommonStyle}
-        />
-      </div>
+      {displayedMode === 'madinah' && (
+        <div
+          key="madinah_layer"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: -4,
+            pointerEvents: 'none',
+            overflow: 'hidden',
+            backgroundColor: '#0a0a0a',
+            opacity: 1,
+            visibility: 'visible',
+            animation: 'fadeIn 0.35s ease-out',
+          }}
+        >
+          <iframe
+            ref={madinahIframeRef}
+            src={`https://www.youtube.com/embed/${settings?.madinahVideoId || 'Rs7St51oDDc'}?autoplay=1&mute=1&controls=0&showinfo=0&rel=0&enablejsapi=1&iv_load_policy=3&modestbranding=1&playsinline=1${originParam}`}
+            title="Madinah Live Background Stream"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+            style={iframeCommonStyle}
+          />
+        </div>
+      )}
 
       {/* Custom Image Layer */}
-      {displayedImageUrl && (
+      {displayedMode === 'custom_image' && displayedImageUrl && (
         <div
           key="custom_image_layer"
           className="custom-site-bg"
@@ -618,10 +756,14 @@ export default function App() {
             pointerEvents: 'none',
             overflow: 'hidden',
             backgroundImage: `url('${displayedImageUrl}')`,
-            opacity: displayedMode === 'custom_image' ? 1 : 0,
-            visibility: displayedMode === 'custom_image' ? 'visible' : 'hidden',
+            opacity: 1,
+            visibility: 'visible',
             filter: isWallpaperFocusMode ? 'none' : 'blur(20px)',
-            transition: 'opacity 0.85s cubic-bezier(0.16, 1, 0.3, 1), filter 0.3s ease',
+            transform: isWallpaperFocusMode ? 'scale(1) translateZ(0)' : 'scale(1.12) translateZ(0)',
+            WebkitTransform: isWallpaperFocusMode ? 'scale(1) translateZ(0)' : 'scale(1.12) translateZ(0)',
+            transformOrigin: 'center center',
+            transition: 'filter 0.3s ease, transform 0.3s ease, -webkit-transform 0.3s ease',
+            animation: 'fadeIn 0.35s ease-out',
           }}
         />
       )}
@@ -642,15 +784,12 @@ export default function App() {
       {/* Floating Dock Navbar */}
       <Header
         activeTab={activeTab}
-        setActiveTab={setActiveTab}
+        setActiveTab={handleNavigateTab}
         settings={settings}
         onToggleFocusMode={() => setIsWallpaperFocusMode((prev) => !prev)}
         isLiveVideo={currentBg?.type === 'video'}
-        onSyncLive={handleSyncLiveStream}
-        isAudioMuted={isAudioMuted}
-        onToggleAudio={handleToggleAudio}
         isWallpaperFocusMode={isWallpaperFocusMode}
-        onToggleBg={() => handleNavigateBg(1)}
+        isOnline={isOnline}
       />
 
       {/* Main App Container - Fades out completely in Focus Mode */}
@@ -663,45 +802,51 @@ export default function App() {
         }}
       >
         <main>
-          <div key={activeTab} className="view-transition-wrapper">
-            {activeTab === 'tracker' && (
-              <PrayerTrackerView
-                settings={settings}
-                onRecordUpdated={handleRecordUpdated}
-                isAudioMuted={isAudioMuted}
-                onToggleAudio={handleToggleAudio}
-                onNavigateToSettings={() => setActiveTab('settings')}
-              />
-            )}
+          <div className={`view-pane ${activeTab === 'tracker' ? 'active' : 'hidden'}`}>
+            <PrayerTrackerView
+              settings={settings}
+              onRecordUpdated={handleRecordUpdated}
+              isAudioMuted={isAudioMuted}
+              onToggleAudio={handleToggleAudio}
+              onNavigateToSettings={() => handleNavigateTab('settings')}
+            />
+          </div>
 
-            {activeTab === 'dashboard' && (
-              <DashboardView key={refreshTrigger} settings={settings} />
-            )}
+          <div className={`view-pane ${activeTab === 'chat' ? 'active' : 'hidden'}`}>
+            <ChatView
+              settings={settings}
+              onNavigateToSettings={() => handleNavigateTab('settings')}
+              onSettingsSaved={handleSettingsSaved}
+              isActive={activeTab === 'chat'}
+              isOnline={isOnline}
+            />
+          </div>
 
-            {activeTab === 'chat' && (
-              <ChatView
-                settings={settings}
-                onNavigateToSettings={() => setActiveTab('settings')}
-                onSettingsSaved={handleSettingsSaved}
-              />
-            )}
+          <div className={`view-pane ${activeTab === 'books' ? 'active' : 'hidden'}`}>
+            <BookReaderView
+              key="book-reader-view"
+              settings={settings}
+              onStartReading={handleStartReading}
+              onExitReading={handleExitReading}
+              isReaderActive={isReaderActive}
+              setIsReaderActive={setIsReaderActive}
+            />
+          </div>
 
-            {activeTab === 'books' && (
-              <BookReaderView
-                key="book-reader-view"
-                settings={settings}
-                onStartReading={handleStartReading}
-                onExitReading={handleExitReading}
-                isReaderActive={isReaderActive}
-                setIsReaderActive={setIsReaderActive}
-              />
-            )}
+          <div className={`view-pane ${activeTab === 'tasbeeh' ? 'active' : 'hidden'}`}>
+            <TasbeehView settings={settings} isActive={activeTab === 'tasbeeh'} />
+          </div>
 
-            {activeTab === 'settings' && (
-              <SettingsView
-                onSettingsSaved={handleSettingsSaved}
-              />
-            )}
+          <div className={`view-pane ${activeTab === 'audio' ? 'active' : 'hidden'}`}>
+            <AudioPlayerView settings={settings} isActive={activeTab === 'audio'} />
+          </div>
+
+          <div className={`view-pane ${activeTab === 'settings' ? 'active' : 'hidden'}`}>
+            <SettingsView
+              settings={settings}
+              onSettingsSaved={handleSettingsSaved}
+              isOnline={isOnline}
+            />
           </div>
         </main>
       </div>
@@ -715,7 +860,7 @@ export default function App() {
             left: '50%',
             transform: 'translateX(-50%)',
             zIndex: 1000,
-            backgroundColor: 'rgba(16, 18, 26, 0.92)',
+            backgroundColor: 'rgba(18, 18, 18, 0.88)',
             border: '1px solid var(--border-subtle)',
             borderRadius: 'var(--radius-pill)',
             padding: '8px 20px',

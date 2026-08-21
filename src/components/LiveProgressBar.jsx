@@ -14,6 +14,7 @@ export default function LiveProgressBar({ currentDateObj, nextDateObj, timezone,
       isNaN(currentDateObj.getTime()) ||
       isNaN(nextDateObj.getTime())
     ) {
+      setProgressPct(0);
       return;
     }
 
@@ -30,7 +31,7 @@ export default function LiveProgressBar({ currentDateObj, nextDateObj, timezone,
       const totalSecs = elapsedSecs + remainingSecs;
 
       const pct = totalSecs > 0 ? Math.min(100, Math.max(0, (elapsedSecs / totalSecs) * 100)) : 0;
-      setProgressPct(pct);
+      setProgressPct(isNaN(pct) ? 0 : pct);
 
       const elapsedMins = elapsedSecs / 60;
       const remainingMins = remainingSecs / 60;
@@ -49,7 +50,7 @@ export default function LiveProgressBar({ currentDateObj, nextDateObj, timezone,
     };
 
     update();
-    const timer = setInterval(update, 5000);
+    const timer = setInterval(update, 1000);
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
@@ -62,9 +63,9 @@ export default function LiveProgressBar({ currentDateObj, nextDateObj, timezone,
   let barGlow = '0 0 10px rgba(255, 255, 255, 0.5)';
 
   if (isActiveCompleted) {
-    // White ending with a short gradient transition into #ffb8fb pink
-    barBackground = 'linear-gradient(270deg, #ffffff 0%, #ffffff 80%, #ffb8fb 100%)';
-    barGlow = '0 0 8px rgba(255, 184, 251, 0.5)';
+    // Completed prayer state: Pure radiant white
+    barBackground = '#ffffff';
+    barGlow = '0 0 10px rgba(255, 255, 255, 0.5)';
   } else if (timeStage === 'on_time_15') {
     // First 15 minutes of Adhan: Pure White
     barBackground = '#ffffff';
@@ -74,9 +75,9 @@ export default function LiveProgressBar({ currentDateObj, nextDateObj, timezone,
     barBackground = '#ef4444';
     barGlow = '0 0 8px rgba(239, 68, 68, 0.4)';
   } else {
-    // After 15 minutes until last 15 minutes: Yellow
-    barBackground = '#f59e0b';
-    barGlow = '0 0 8px rgba(245, 158, 11, 0.4)';
+    // Standard progress stage: Pure White
+    barBackground = '#ffffff';
+    barGlow = '0 0 10px rgba(255, 255, 255, 0.5)';
   }
 
   if (
@@ -91,7 +92,7 @@ export default function LiveProgressBar({ currentDateObj, nextDateObj, timezone,
   }
 
   return (
-    <div style={{ width: '100%', padding: '2px 0', margin: '-2px 0' }}>
+    <div style={{ width: '100%', padding: '6px 0', margin: '4px 0' }}>
       <div
         style={{
           width: '100%',

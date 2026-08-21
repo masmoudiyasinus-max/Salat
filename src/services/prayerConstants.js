@@ -30,9 +30,9 @@ export const PRAYER_STATUSES = {
 
 export const PRAYER_STATUS_LABELS = {
   on_time: { ar: 'في وقتها', en: 'On Time', color: '#ffffff' },
-  late: { ar: 'متأخرة', en: 'Late', color: '#f59e0b' },
+  late: { ar: 'متأخرة', en: 'Late', color: '#ffffff' },
   qada: { ar: 'قضاء', en: 'Qada', color: '#ef4444' },
-  missed: { ar: 'فائتة', en: 'Missed', color: '#64748b' },
+  missed: { ar: 'فائتة', en: 'Missed', color: '#737373' },
 };
 
 export const APP_EVENTS = {
@@ -41,4 +41,6 @@ export const APP_EVENTS = {
   SETTINGS_UPDATED: 'settings-updated',
   PRAYER_TIMES_UPDATED: 'prayer-times-updated',
   PREVIEW_CHAT_IMAGE: 'preview-chat-image',
+  MUNEER_PROACTIVE_MESSAGE: 'muneer-proactive-message',
+  MUNEER_PROACTIVE_START: 'muneer-proactive-start',
 };

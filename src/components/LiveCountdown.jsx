@@ -6,6 +6,7 @@ export default function LiveCountdown({ nextDateObj, timezone, language = 'ar' }
 
   useEffect(() => {
     if (!nextDateObj || !(nextDateObj instanceof Date) || isNaN(nextDateObj.getTime())) {
+      setCountdownStr('');
       return;
     }
 
