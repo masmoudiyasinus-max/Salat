@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import ReactDOM from 'react-dom';
 import { APP_EVENTS } from '../services/prayerConstants';
-import { formatMarkdownText } from '../services/markdownFormatter';
+import { formatMarkdownText } from '../services/markdownFormatter.jsx';
 import { sendBrowserNotification } from '../services/permissionService';
 
 export default function MuneerToastNotification() {

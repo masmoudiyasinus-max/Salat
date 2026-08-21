@@ -47,7 +47,7 @@ import { sendGeminiChatMessage, generateSessionTitle, generateSessionContextualT
 import { extractMuneerAction, executeSettingsActionDirectly } from '../services/muneerActions';
 import { APP_EVENTS } from '../services/prayerConstants';
 import { getDailySuggestions, ensureDailySuggestions } from '../services/dailySuggestionsService';
-import { formatMarkdownText, parseInlineMarkdown } from '../services/markdownFormatter';
+import { formatMarkdownText, parseInlineMarkdown } from '../services/markdownFormatter.jsx';
 
 function insertFileChipToEditor(editorEl, fileObj, attachedFilesMapRef, setHasContent) {
   if (!editorEl) return;
