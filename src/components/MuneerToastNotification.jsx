@@ -1,8 +1,66 @@
 import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import ReactDOM from 'react-dom';
-import { APP_EVENTS } from '../services/prayerConstants';
-import { formatMarkdownText } from '../services/markdownFormatter.jsx';
-import { sendBrowserNotification } from '../services/permissionService';
+import { APP_EVENTS } from '../services/prayerConstants.js';
+import { sendBrowserNotification } from '../services/permissionService.js';
+
+function parseInlineMarkdownStatic(text) {
+  if (!text) return '';
+  const parts = [];
+  const regex = /(\*\*.*?\*\*|\*.*?\*|`.*?`|\[.*?\]\(.*?\))/g;
+  let lastIndex = 0;
+  let match;
+  while ((match = regex.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push(text.slice(lastIndex, match.index));
+    }
+    const token = match[0];
+    if (token.startsWith('**') && token.endsWith('**')) {
+      parts.push(
+        <strong key={match.index} style={{ fontWeight: '800', color: '#ffffff' }}>
+          {token.slice(2, -2)}
+        </strong>
+      );
+    } else if (token.startsWith('*') && token.endsWith('*')) {
+      parts.push(
+        <em key={match.index} style={{ fontStyle: 'italic', color: 'var(--text-primary)' }}>
+          {token.slice(1, -1)}
+        </em>
+      );
+    } else if (token.startsWith('`') && token.endsWith('`')) {
+      parts.push(
+        <code
+          key={match.index}
+          style={{
+            backgroundColor: 'rgba(255, 255, 255, 0.08)',
+            padding: '2px 6px',
+            borderRadius: '4px',
+            fontSize: '0.88em',
+            color: 'var(--status-on-time)',
+          }}
+        >
+          {token.slice(1, -1)}
+        </code>
+      );
+    } else {
+      parts.push(token);
+    }
+    lastIndex = regex.lastIndex;
+  }
+  if (lastIndex < text.length) {
+    parts.push(text.slice(lastIndex));
+  }
+  return parts;
+}
+
+function formatMarkdownText(rawText) {
+  if (!rawText) return null;
+  const lines = String(rawText).split('\n');
+  return lines.map((line, idx) => (
+    <p key={idx} style={{ margin: '3px 0', lineHeight: '1.6' }}>
+      {parseInlineMarkdownStatic(line)}
+    </p>
+  ));
+}
 
 export default function MuneerToastNotification() {
   const [toastData, setToastData] = useState(null); // { id, signalType, fullText }
