@@ -3,7 +3,7 @@ import React from 'react';
 import { renderToString } from 'react-dom/server';
 
 // Import services and components
-import { DATA_STATUS, isValidTimeString, getPrayerTimesStatus, getWeatherDataStatus, getRecordsStatus } from '../src/services/dataReadiness.js';
+import { DATA_STATUS, isValidTimeString, getPrayerTimesStatus, getRecordsStatus } from '../src/services/dataReadiness.js';
 import { getCurrentObligatoryPrayerId, calculateNightTimes, toWesternDigits, getCityNowDate } from '../src/services/storage.js';
 import { resolveTimezoneForLocation } from '../src/services/adhanCalculator.js';
 import { getCityTodayDateStr } from '../src/services/timeUtils.js';

@@ -1,59 +1,74 @@
-# Project: Habit Tracker Full-Codebase Audit & Hardening
+# Project: Habit Tracker Comprehensive Graphify Decoupling & Dead Code Elimination
 
 ## Architecture
 The Habit Tracker is a local-first, privacy-respecting React 19 single-page application consisting of:
-- **Core Time & Calculation Engine**: `adhanCalculator.js`, `aladhanApiService.js`, `countryLocalization.js`, `storage.js`.
+- **Core Time & Calculation Engine**: `adhanCalculator.js`, `aladhanApiService.js`, `countryLocalization.js`, `storage.js`, `timeUtils.js`, `dataReadiness.js`.
 - **Prayer Views & Timers**: `PrayerTrackerView.jsx`, `ActivePrayerHero.jsx`, `LiveClock.jsx`, `LiveCountdown.jsx`, `LiveProgressBar.jsx`, `ScheduleTableModal.jsx`.
-- **Sheikh Muneer AI Chat**: `ChatView.jsx`, `geminiApi.js` (local storage chat history, prompt assembly, streaming, Speech Synthesis).
-- **Book Reader**: `BookReaderView.jsx`, `bookStorage.js` (pdfjs-dist rendering, shelf, bookmarking, zoom/rotation).
-- **Settings, Analytics & Shell**: `SettingsView.jsx`, `DashboardView.jsx`, `App.jsx`, `Header.jsx`, `index.css`.
+- **Sheikh Muneer AI Chat**: `ChatView.jsx`, `geminiApi.js`, `muneerSignalService.js`, `markdownFormatter.jsx` (local storage chat history, prompt assembly, streaming, Speech Synthesis).
+- **Book Reader**: `BookReaderView.jsx`, `bookStorage.js` (pdfjs-dist rendering, shelf, bookmarking, zoom/rotation, dual-page RTL).
+- **Audio & Tasbeeh**: `AudioPlayerView.jsx`, `audioStorage.js`, `TasbeehView.jsx`, `tasbeehStorage.js`.
+- **Settings, Analytics & Shell**: `SettingsView.jsx`, `DashboardView.jsx`, `App.jsx`, `Header.jsx`, `src/index.css`.
 
 ## Feature Inventory
 | # | Feature | Description | Milestone | Source |
 |---|---------|-------------|-----------|--------|
-| 1 | Aladhan Calculation Method Map | Support numeric string IDs and standard method resolution | M1 | Survey (Explorer 1) [DONE] |
-| 2 | City/Country Cache Validation | Isolate source schedule cache by city and country | M1 | Survey (Explorer 1) [DONE] |
-| 3 | Streak Continuity Logic | Validate 1-day calendar continuity for on-time habit streaks | M1 | Survey (Explorer 1, 3) [DONE] |
-| 4 | Core Services Cleanup | Remove dead imports, unused functions, fix DST calculation | M1 | Survey (Explorer 1, 2) [DONE] |
-| 5 | Midnight-to-Fajr Countdown Fix | Correct day offset calculation in early morning pre-Fajr hours | M2 | Survey (Explorer 1) [DONE] |
-| 6 | Schedule Modal Timezone Sync | Use effective location timezone for today's ISO and prayer rows | M2 | Survey (Explorer 1) [DONE] |
-| 7 | Prayer Tracker Dead Code Elimination | Remove unused handlers (handleMarkMissed, handleStatusChange, etc.) | M2 | Survey (Explorer 1) [DONE] |
-| 8 | ChatView Reference & State Fixes | Fix saveChatSessions import, setInputPrompt references, file attachment state | M3 | Survey (Explorer 2) |
-| 9 | ChatView Session Deletion Fix | Fix deleteSession return object handling | M3 | Survey (Explorer 2) |
-| 10 | Sheikh Muneer Speech Synthesis | Provide native TTS voice playback controls for assistant responses | M3 | Survey (Explorer 2, ORIGINAL_REQUEST) |
-| 11 | BookReader PDF Loader & State Fix | Restore loadPdf / setPdfDoc state setters, clean dead icon imports | M3 | Survey (Explorer 2) |
-| 12 | SettingsView Timezone Import Fix | Import resolveTimezoneForLocation in SettingsView | M4 | Survey (Explorer 3) |
-| 13 | SettingsView Event Listener Cleanup | Remove duplicate SETTINGS_UPDATED event listeners | M4 | Survey (Explorer 3) |
-| 14 | CSS @keyframes Definitions | Add fadeIn and slideUp keyframes in src/index.css | M4 | Survey (Explorer 3, AGENTS.md) |
-| 15 | Dashboard Timeframe Alignment | Align 3-month filter and local timezone date boundaries | M4 | Survey (Explorer 3) |
-| 16 | App & Header Dead Code Cleanup | Remove unused state variables and unused imports | M4 | Survey (Explorer 3) |
-| 17 | Final Build & Oxlint Verification | Achieve 0 errors in npm run build and npx oxlint src | M5 | ORIGINAL_REQUEST |
-| 18 | QA & Forensic Audit Gate | Rigorous regression review and authentic implementation verification | M5 | ORIGINAL_REQUEST, AGENTS.md |
+| 1 | Root Duplicate Assets Removal | Remove duplicate fonts & SVGs from project root (~1.34 MB) | M1 | Survey (Explorer 1) |
+| 2 | Dead Files Cleanup | Delete unused `src/App.css`, `read_logs.js`, `public/icon.png`, `public/tasbih.svg` | M1 | Survey (Explorer 1) |
+| 3 | Dead Exported Functions Removal | Remove 10 unused functions with 0 callers across services | M1 | Survey (Explorer 1) |
+| 4 | Dead Dependency Removal | Uninstall `papaparse` from package.json (0 callers after CSV removal) | M1 | Survey (Explorer 1) |
+| 5 | Unused CSS Keyframes Cleanup | Delete `@keyframes cursorBlink` and `@keyframes modalScale` in `src/index.css` | M1 | Survey (Explorer 1) |
+| 6 | Markdown Parsing Deduplication | Centralize markdown parsing via `src/services/markdownFormatter.jsx` | M1 | Survey (Explorer 1, 2) |
+| 7 | ChatView God Node Decoupling | Extract child components (`ChatMessageList`, `ChatInputBar`, `ChatSessionDrawer`) | M2 | Survey (Explorer 2) |
+| 8 | BookReaderView God Node Decoupling | Extract child components (`BookLibraryShelf`, `PdfCanvasViewer`, `ReaderToolbar`) | M2 | Survey (Explorer 2) |
+| 9 | SettingsView God Node Decoupling | Extract section components (`LocationSettings`, `PrayerSettings`, `DataBackup`) | M2 | Survey (Explorer 2) |
+| 10 | TasbeehView & AudioPlayerView Decoupling | Extract child components into `src/components/tasbeeh/` and `src/components/audio/` | M2 | Survey (Explorer 2) |
+| 11 | CountryLocalization Data Extraction | Extract 1,300 lines of static city maps into `cityData.js`, keep Facade | M2 | Survey (Explorer 2) |
+| 12 | Storage Service Modularization | Organize storage slices under `src/services/storage/`, keep Facade | M2 | Survey (Explorer 2) |
+| 13 | DOM Retentive Mounting Invariant | Enforce all 6 views permanently mounted in DOM via `.view-pane` | M3 | Survey (Explorer 3) |
+| 14 | Choreographed Hand-Off & Keyframes | Enforce 280ms typing indicator exit fade & keyframe state machine | M3 | Survey (Explorer 3, AGENTS.md) |
+| 15 | Background Transition Curtain Invariant | Enforce 280ms drop, `img.decode()` sensor, and 0.85s dissolve lift | M3 | Survey (Explorer 3, AGENTS.md) |
+| 16 | GeminiApi Ineffective Import Resolution | Align static vs dynamic imports of `geminiApi.js` to enable clean chunking | M3 | Survey (Explorer 1, 3) |
+| 17 | Local-First & Anti-Spam Invariants | Enforce IndexedDB for binaries, localStorage for metadata, tap throttles | M3 | Survey (Explorer 3) |
+| 18 | Full Build, Lint & Runtime Validation | Run `npm run build`, `npm run lint`, verify local server on port 5173 | M4 | ORIGINAL_REQUEST |
+| 19 | Challenger & Forensic Audit Verification | Empirical testing, regression suite (62/62), authentic implementation audit | M4 | ORIGINAL_REQUEST, AGENTS.md |
 
 ## Milestones
 | # | Name | Scope | Dependencies | Status |
 |---|------|-------|-------------|--------|
-| 1 | Core Services & Time Engine | `src/services/adhanCalculator.js`, `aladhanApiService.js`, `storage.js`, `bookStorage.js`, `permissionService.js` | none | DONE |
-| 2 | Prayer Tracker & Live Time Views | `src/components/PrayerTrackerView.jsx`, `ActivePrayerHero.jsx`, `LiveClock.jsx`, `LiveCountdown.jsx`, `LiveProgressBar.jsx`, `ScheduleTableModal.jsx` | M1 | DONE |
-| 3 | Sheikh Muneer AI Chat & Book Reader | `src/components/ChatView.jsx`, `BookReaderView.jsx`, `geminiApi.js` | M1 | DONE |
-| 4 | Settings, Dashboard, App & Keyframes | `src/components/SettingsView.jsx`, `DashboardView.jsx`, `App.jsx`, `Header.jsx`, `src/index.css` | M1 | IN_PROGRESS |
-| 5 | Full Build, Oxlint & QA Verification | Full repository audit, build test, oxlint, challenger and forensic verification | M1, M2, M3, M4 | PLANNED |
+| 1 | Dead Code & Orphaned Symbol Elimination (R1) | Delete dead files/assets, remove 10 dead exported functions, uninstall papaparse, remove unused CSS keyframes, deduplicate markdown logic | none | DONE (8 files deleted, ~1.35 MB reclaimed, 12 dead funcs removed, papaparse uninstalled, 126/126 tests pass) |
+| 2 | God Node Decoupling & Modular Architecture (R2) | Decouple ChatView, BookReaderView, SettingsView, TasbeehView, AudioPlayerView; extract cityData.js and modular storage slices via Facades | M1 | DONE (29 modular components extracted across 7 domain directories, 2 sovereign facades, 0 lint warnings/errors, 182/182 tests pass) |
+| 3 | Invariant Preservation & AGENTS.md Hardening (R3) | Enforce DOM retentive mounting, 280ms handoff timing, background curtain, import chunking, local-first storage rules | M2 | IN_PROGRESS |
+| 4 | Final Verification, Build, Local Server & Forensic Audit | `npm run build`, `npm run lint`, runtime validation on port 5173, full 62/62 regression pass, Challenger empirical test, Forensic Auditor gate | M1, M2, M3 | PLANNED |
 
 ## Interface Contracts
-### `src/services/adhanCalculator.js` ↔ `src/components/PrayerTrackerView.jsx` & `SettingsView.jsx`
-- `getPrayerTimes(date, coords, method, options)` returns prayer times object `{ Fajr, Sunrise, Dhuhr, Asr, Maghrib, Isha, ... }`.
-- `ALADHAN_METHOD_MAP` must resolve numeric strings (e.g. `'4'`, `'5'`, `'9'`, `'13'`) as well as integers and names.
-- `getSourceScheduleCache` must key on `${city}_${country}_${year}_${month}_${method}`.
+### `src/services/markdownFormatter.jsx` ↔ `ChatView.jsx` & `MuneerToastNotification.jsx`
+- `parseInlineMarkdownStatic(text)`: Pure function returning React nodes for bold, italic, code, quotes, lists, headings.
+- Must be the single source of truth for inline markdown across the application.
 
-### `src/services/storage.js` ↔ `PrayerTrackerView.jsx` & `DashboardView.jsx`
-- `computeSummaryStats(history)` returns `{ currentStreak, bestStreak, totalCompleted, ... }`. Streak requires `diffInDays === 1`.
-- `deleteSession(sessionId)` returns `{ activeId: string, sessions: Session[] }`.
+### `src/services/countryLocalization.js` (Facade) ↔ Consumers
+- Must re-export `COUNTRIES`, `CITY_COORDINATES`, `resolveTimezoneForLocation`, etc. from `src/services/localization/cityData.js` and algorithm helpers.
+- Consumers continue importing from `src/services/countryLocalization.js` with zero signature changes.
 
-### `src/services/countryLocalization.js` ↔ `SettingsView.jsx`
-- `resolveTimezoneForLocation(city, country)` must be exported and imported correctly by `SettingsView.jsx`.
+### `src/services/storage.js` (Facade) ↔ Consumers
+- Must re-export `getSettings`, `saveSettings`, `getHistory`, `saveHistory`, `computeSummaryStats`, `exportAllUserData`, `importAllUserData` from modular slices.
+- Eliminates CSV dead functions (`exportToCSV`, `importFromCSV`) while maintaining 100% compatibility with JSON backup/restore.
+
+### DOM View Mounting Invariant (`src/App.jsx` ↔ `src/index.css`)
+- All 6 view panes (`PrayerTrackerView`, `ChatView`, `BookReaderView`, `TasbeehView`, `AudioPlayerView`, `SettingsView`) MUST remain permanently rendered in DOM:
+  `<div className={`view-pane ${activeTab === 'key' ? 'active' : 'hidden'}`}>`
+- CSS rules: `.view-pane.active { display: flex !important; }` and `.view-pane.hidden { display: none !important; }`.
+- Under NO circumstances may these be converted to conditional unmounting (`{activeTab === 'key' && ...}`).
 
 ## Code Layout
-- `src/components/`: React UI components.
-- `src/services/`: Pure business logic, calculations, local storage abstractions, external API helpers.
+- `src/components/`:
+  - `chat/`: Sub-components extracted from `ChatView.jsx`
+  - `book/`: Sub-components extracted from `BookReaderView.jsx`
+  - `settings/`: Section components extracted from `SettingsView.jsx`
+  - `tasbeeh/`: Sub-components extracted from `TasbeehView.jsx`
+  - `audio/`: Sub-components extracted from `AudioPlayerView.jsx`
+  - `prayer/`: Sub-components for prayer hero, countdown, table
+- `src/services/`: Pure business logic, calculation engines, storage facades.
+  - `localization/`: Static city data tables decoupled from localization algorithms.
+  - `storage/`: Granular domain storage slices.
 - `src/index.css`: Global styles, CSS variables, and `@keyframes` animations.
 - `.agents/`: Agent coordination metadata ONLY.

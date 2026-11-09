@@ -27,6 +27,7 @@ import {
   setActiveBookId,
   DEFAULT_READING_STATE,
   getDayDiff,
+  getTodayDateString,
 } from '../src/services/bookStorage.js';
 
 import {
@@ -320,7 +321,7 @@ await runTest('recordReadingProgress properly updates bookmarks, daily logs, and
   assert.equal(updated1.bookmarks[bookId].lastPage, 3);
   assert.equal(updated1.bookmarks[bookId].totalPages, 100);
 
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = getTodayDateString();
   const log1 = updated1.dailyLogs[todayStr];
   assert.ok(log1);
   assert.equal(log1.pagesRead, 4);

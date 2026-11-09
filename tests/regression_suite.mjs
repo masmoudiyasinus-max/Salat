@@ -1,3 +1,6 @@
+import { register } from 'node:module';
+register('./loader.mjs', import.meta.url);
+
 import assert from 'node:assert/strict';
 
 // Import core services and utilities
@@ -14,7 +17,6 @@ import {
   DATA_STATUS,
   isValidTimeString,
   getPrayerTimesStatus,
-  getWeatherDataStatus,
   getRecordsStatus,
 } from '../src/services/dataReadiness.js';
 

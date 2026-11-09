@@ -1,0 +1,395 @@
+/**
+ * theme-tokens.css - OpenGlass UI (moekoelueker/open-glass-ui) Core Theme Bridge
+ * Visual Language: Native Liquid Glass (CSS-First Optical Refraction & Translucency)
+ */
+
+@import "open-glass-ui/styles.css";
+
+:root {
+	/* ---------------------------------------------------- */
+	/* OpenGlass UI Design System Parameters                */
+	/* ---------------------------------------------------- */
+	--ogui-glass-blur: 1.6;
+	--ogui-glass-saturation: 1.8;
+	--ogui-glass-rim: 1.5;
+	--ogui-glass-lensing: 1.8;
+	--ogui-glass-highlight: 1.6;
+	--ogui-glass-light-angle: 335deg;
+	--ogui-glass-shadow: 1.3;
+	--ogui-color-accent: #38bdf8;
+	--ogui-color-accent-ink: #030712;
+	--ogui-color-text: #ffffff;
+	--ogui-color-muted: rgba(255, 255, 255, 0.75);
+	--ogui-radius-surface: 20px;
+	--ogui-radius-control: 12px;
+	--ogui-hairline: rgba(255, 255, 255, 0.2);
+	--ogui-control: rgba(255, 255, 255, 0.06);
+	--ogui-control-hover: rgba(255, 255, 255, 0.056);
+	--ogui-control-active: rgba(255, 255, 255, 0.18);
+
+	/* ---------------------------------------------------- */
+	/* Habit Tracker Universal Surface Tokens               */
+	/* ---------------------------------------------------- */
+	--glass-bg: var(--ogui-color-surface, rgba(255, 255, 255, 0.05));
+	--glass-sub-bg: var(--ogui-control, rgba(255, 255, 255, 0.08));
+	--glass-blur: var(--ogui-glass-blur, 24px);
+	--glass-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.28);
+
+	/* ---------------------------------------------------- */
+	/* Controls & Button Tokens                             */
+	/* ---------------------------------------------------- */
+	--btn-bg-transparent: var(--ogui-control, rgba(255, 255, 255, 0.06));
+	--btn-bg-hover: var(--ogui-control-hover, rgba(255, 255, 255, 0.14));
+	--btn-border: 1px solid var(--ogui-hairline, rgba(255, 255, 255, 0.2));
+	--btn-border-hover: 1px solid rgba(255, 255, 255, 0.45);
+
+	/* ---------------------------------------------------- */
+	/* Banner & Capsule Tokens                              */
+	/* ---------------------------------------------------- */
+	--banner-bg: rgba(255, 255, 255, 0.03);
+	--banner-border: 1px solid var(--ogui-hairline, rgba(255, 255, 255, 0.18));
+	--banner-text: var(--ogui-color-text, #ffffff);
+
+	/* ---------------------------------------------------- */
+	/* Floating Dock & Modal Backdrops                      */
+	/* ---------------------------------------------------- */
+	--dock-bg: var(--ogui-control, rgba(255, 255, 255, 0.06));
+	--dock-border: 1px solid var(--ogui-hairline, rgba(255, 255, 255, 0.22));
+	--modal-backdrop-bg: rgba(0, 0, 0, 0.45);
+
+	--card-border-width: 1px;
+	--card-border-color: var(--ogui-hairline, rgba(255, 255, 255, 0.18));
+	--card-border-highlight: rgba(255, 255, 255, 0.35);
+
+	--accent-primary: var(--ogui-color-accent, #38bdf8);
+	--accent-primary-hover: #7dd3fc;
+	--accent-secondary: rgba(255, 255, 255, 0.12);
+	--accent-glow: rgba(56, 189, 248, 0.25);
+	--active-border-glow: 0 0 20px rgba(56, 189, 248, 0.35);
+	--accent: var(--accent-primary);
+
+	--text-primary: var(--ogui-color-text, #ffffff);
+	--text-secondary: var(--ogui-color-muted, rgba(255, 255, 255, 0.78));
+	--text-muted: rgba(255, 255, 255, 0.48);
+
+	--status-success: var(--accent-primary);
+	--status-success-bg: rgba(56, 189, 248, 0.15);
+	--status-active: var(--accent-primary);
+	--status-active-bg: rgba(56, 189, 248, 0.15);
+	--status-warning: rgba(245, 215, 160, 0.95);
+	--status-warning-bg: var(--banner-bg);
+	--status-neutral: rgba(255, 255, 255, 0.4);
+	--status-neutral-bg: rgba(255, 255, 255, 0.08);
+	--status-danger: rgba(239, 68, 68, 0.9);
+	--status-danger-bg: rgba(239, 68, 68, 0.12);
+
+	--card-radius: var(--ogui-radius-surface, 20px);
+	--button-radius: var(--ogui-radius-control, 12px);
+	--modal-radius: 24px;
+	--radius-pill: 9999px;
+}
+
+/* ==========================================================================
+   Typography Standards
+   ========================================================================== */
+h1,
+.heading-1 {
+	font-size: 1.75rem;
+	font-weight: 700;
+	line-height: 1.25;
+	color: var(--text-primary);
+}
+
+h2,
+.heading-2 {
+	font-size: 1.35rem;
+	font-weight: 700;
+	line-height: 1.3;
+	color: var(--text-primary);
+}
+
+h3,
+.heading-3 {
+	font-size: 1.1rem;
+	font-weight: 700;
+	line-height: 1.35;
+	color: var(--text-primary);
+}
+
+/* ==========================================================================
+   OpenGlass Reusable Surface Classes
+   ========================================================================== */
+
+/* Standard container frame */
+:is(.glass-panel, .glass-card, .bento-card):not([data-ogui-glass]):not(
+	.ogui-card
+) {
+	position: relative;
+	background: var(--glass-bg);
+	backdrop-filter: blur(var(--glass-blur)) saturate(160%);
+	-webkit-backdrop-filter: blur(var(--glass-blur)) saturate(160%);
+	border: var(--card-border-width) solid var(--card-border-color);
+	border-radius: var(--card-radius);
+	box-shadow:
+		inset 0 1px 1px 0 rgba(255, 255, 255, 0.2),
+		var(--glass-shadow);
+	transition:
+		border-color 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+		box-shadow 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+:is(.glass-card, .bento-card):not([data-ogui-glass]):not(.ogui-card):hover {
+	border-color: var(--card-border-highlight);
+}
+
+/* Popups, dialogs, and schedule tables */
+.glass-modal {
+	position: relative;
+	background: rgba(15, 18, 22, 0.85);
+	backdrop-filter: blur(32px) saturate(180%);
+	-webkit-backdrop-filter: blur(32px) saturate(180%);
+	border: var(--card-border-width) solid var(--card-border-color);
+	border-radius: var(--modal-radius);
+	box-shadow:
+		inset 0 1px 1px 0 rgba(255, 255, 255, 0.25),
+		0 24px 64px rgba(0, 0, 0, 0.6);
+}
+
+/* Subtle inner sub-card surface inheriting tokens */
+.glass-sub-card {
+	background: var(--glass-sub-bg);
+	backdrop-filter: blur(calc(var(--glass-blur) * 0.5));
+	-webkit-backdrop-filter: blur(calc(var(--glass-blur) * 0.5));
+	border: var(--card-border-width) solid var(--card-border-color);
+	border-radius: calc(var(--card-radius) - 4px);
+	transition:
+		border-color 0.2s ease,
+		background-color 0.2s ease;
+}
+
+.glass-sub-card:hover {
+	border-color: var(--card-border-highlight);
+	background: var(--btn-bg-hover);
+}
+
+/* ==========================================================================
+   OpenGlass Button System
+   ========================================================================== */
+
+/* Tier 1: Primary Action Button */
+.btn-primary {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 8px;
+	padding: 10px 20px;
+	background: var(--btn-bg-transparent) !important;
+	color: #ffffff !important;
+	border: var(--btn-border) !important;
+	border-radius: var(--button-radius);
+	font-size: 0.88rem;
+	font-weight: 700;
+	cursor: pointer;
+	box-shadow: inset 0 1px 1px 0 rgba(255, 255, 255, 0.2) !important;
+	backdrop-filter: blur(var(--glass-blur, 24px));
+	-webkit-backdrop-filter: blur(var(--glass-blur, 24px));
+	transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+	line-height: 1;
+	white-space: nowrap;
+}
+
+.btn-primary:hover:not(:disabled) {
+	background: var(--btn-bg-hover) !important;
+	border: var(--btn-border-hover) !important;
+	color: #ffffff !important;
+	box-shadow:
+		0 0 16px var(--accent-glow),
+		inset 0 1px 1px 0 rgba(255, 255, 255, 0.3) !important;
+	transform: translateY(-1px);
+}
+
+.btn-primary:active:not(:disabled) {
+	transform: translateY(0);
+}
+
+.btn-primary:disabled {
+	opacity: 0.4;
+	cursor: not-allowed;
+	box-shadow: none !important;
+}
+
+/* Tier 2: Secondary Glass Button */
+.btn-secondary {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 8px;
+	padding: 9px 18px;
+	background: var(--btn-bg-transparent) !important;
+	backdrop-filter: blur(var(--glass-blur, 24px));
+	-webkit-backdrop-filter: blur(var(--glass-blur, 24px));
+	color: var(--text-primary) !important;
+	border: var(--btn-border) !important;
+	border-radius: var(--button-radius);
+	font-size: 0.86rem;
+	font-weight: 600;
+	cursor: pointer;
+	box-shadow: inset 0 1px 1px 0 rgba(255, 255, 255, 0.15) !important;
+	transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+	line-height: 1;
+	white-space: nowrap;
+}
+
+.btn-secondary:hover:not(:disabled) {
+	background: var(--btn-bg-hover) !important;
+	border: var(--btn-border-hover) !important;
+	color: #ffffff !important;
+	box-shadow: 0 0 16px var(--accent-glow) !important;
+	transform: translateY(-1px);
+}
+
+:where([data-ogui-design="liquid"]) .ogui-button:hover:not(:disabled):not(.ogui-button--primary) {
+	background-color: var(--ogui-control-hover, rgba(255, 255, 255, 0.056)) !important;
+	--ogui-lg-glint: 0.4 !important;
+}
+
+.btn-secondary:active:not(:disabled) {
+	transform: translateY(0);
+}
+
+.btn-secondary:disabled {
+	opacity: 0.4;
+	cursor: not-allowed;
+}
+
+/* Tier 3: Ghost / Icon Button */
+.btn-ghost,
+.icon-btn {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	padding: 8px;
+	background: transparent;
+	border: 1px solid transparent;
+	border-radius: var(--button-radius);
+	color: var(--text-secondary);
+	cursor: pointer;
+	transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.btn-ghost:hover:not(:disabled),
+.icon-btn:hover:not(:disabled) {
+	background: var(--btn-bg-hover) !important;
+	color: var(--text-primary);
+	border-color: rgba(255, 255, 255, 0.3);
+}
+
+/* ==========================================================================
+   OpenGlass Badges & Pill Tags
+   ========================================================================== */
+.badge-pill {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	border-radius: 9999px;
+	font-size: 0.75rem;
+	font-weight: 500;
+	padding: 4px 10px;
+	line-height: 1;
+	white-space: nowrap;
+	border: 1px solid var(--badge-border, var(--card-border-color));
+	background: var(--badge-bg, rgba(255, 255, 255, 0.04));
+	color: var(--badge-color, var(--text-primary));
+	backdrop-filter: blur(12px);
+	-webkit-backdrop-filter: blur(12px);
+	transition: all 0.2s ease;
+}
+
+.badge-pill-success {
+	--badge-color: var(--status-success);
+	--badge-border: var(--status-success);
+	--badge-bg: var(--status-success-bg);
+}
+
+.badge-pill-active {
+	--badge-color: var(--status-active);
+	--badge-border: var(--status-active);
+	--badge-bg: var(--status-active-bg);
+}
+
+.badge-pill-warning {
+	--badge-color: var(--status-warning);
+	--badge-border: var(--banner-border);
+	--badge-bg: var(--banner-bg);
+}
+
+.badge-pill-neutral {
+	--badge-color: var(--status-neutral);
+	--badge-border: var(--status-neutral);
+	--badge-bg: var(--status-neutral-bg);
+}
+
+.badge-pill-danger {
+	--badge-color: var(--status-danger);
+	--badge-border: var(--status-danger);
+	--badge-bg: var(--status-danger-bg);
+}
+
+/* ==========================================================================
+   Ultra-Thin Minimalist Scrollbar
+   ========================================================================== */
+::-webkit-scrollbar {
+	width: 4px;
+	height: 4px;
+}
+
+::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+	background: rgba(255, 255, 255, 0.18);
+	border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+	background: var(--accent-primary);
+}
+
+* {
+	scrollbar-width: thin;
+	scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+
+/* ==========================================================================
+   Unified OpenGlass Modal & Row Architecture
+   ========================================================================== */
+:where([data-ogui-design="liquid"]) .ogui-overlay__surface {
+	background:
+		linear-gradient(180deg, rgba(14, 18, 26, 0.55) 0%, rgba(10, 12, 18, 0.72) 100%) !important;
+	border: 1px solid rgba(255, 255, 255, 0.18) !important;
+	border-radius: 24px !important;
+	box-shadow:
+		inset 0 1px rgba(255, 255, 255, 0.25),
+		0 24px 72px rgba(0, 0, 0, 0.65) !important;
+	backdrop-filter: blur(28px) saturate(1.4) !important;
+	-webkit-backdrop-filter: blur(28px) saturate(1.4) !important;
+}
+
+:where([data-ogui-design="liquid"]) .ogui-overlay__scrim {
+	background: rgba(0, 0, 0, 0.52) !important;
+	backdrop-filter: blur(12px) !important;
+	-webkit-backdrop-filter: blur(12px) !important;
+}
+
+.openglass-row {
+	background: rgba(255, 255, 255, 0.05);
+	border: 1px solid rgba(255, 255, 255, 0.10);
+	border-radius: 16px;
+	transition: background 0.18s ease, border-color 0.18s ease;
+}
+
+.openglass-row:hover {
+	background: rgba(255, 255, 255, 0.09);
+	border-color: rgba(255, 255, 255, 0.18);
+}
